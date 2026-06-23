@@ -45,6 +45,8 @@ services:
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 4
         parallelism.default: 1
+        heartbeat.interval: 10000
+        heartbeat.timeout: 120000
     volumes:
       - ../Results:/results
     networks:
@@ -62,6 +64,8 @@ services:
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 4
         parallelism.default: 1
+        heartbeat.interval: 10000
+        heartbeat.timeout: 120000
     volumes:
       - ../Results:/results
     networks:
