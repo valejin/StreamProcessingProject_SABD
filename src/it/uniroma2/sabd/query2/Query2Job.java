@@ -151,7 +151,7 @@ public class Query2Job {
 
     /**
      * Accumula tutti i voli dall'inizio del dataset (GlobalWindow) e produce
-     * il ranking cumulativo ad ogni trigger (ogni 30min di event time).
+     * il ranking cumulativo ad ogni trigger (ogni 60min di event time).
      *
      * Timestamp di output: massimo event time visto tra gli elementi.
      * Più leggibile di GlobalWindow.getStart() che vale Long.MIN_VALUE.
@@ -159,18 +159,19 @@ public class Query2Job {
     public static class Q2GlobalRankingFunction
             extends ProcessAllWindowFunction<FlightEvent, Q2RankedEntry, GlobalWindow> {
 
+        // Epoch ms di 2025-01-01 00:00:00 UTC — inizio fisso del dataset
+        private static final long DATASET_START_MS =
+                java.time.Instant.parse("2025-01-01T00:00:00Z").toEpochMilli();
+
         @Override
         public void process(Context context,
                             Iterable<FlightEvent> elements,
                             Collector<Q2RankedEntry> out) {
 
             Map<Integer, Q2AirportStats> airportMap = new HashMap<>();
-            long maxEventTime = Long.MIN_VALUE;
 
             for (FlightEvent e : elements) {
                 if (e.getOriginAirportId() == null) continue;
-                if (e.getEventTime() > maxEventTime) maxEventTime = e.getEventTime();
-
                 Q2AirportStats stats = airportMap.computeIfAbsent(
                         e.getOriginAirportId(),
                         id -> { Q2AirportStats s = new Q2AirportStats();
@@ -178,10 +179,10 @@ public class Query2Job {
                 stats.addFlight(e.getAirline(), e.getDestAirportId(), e.getDepDelay());
             }
 
-            // Q2GlobalRankingFunction: arrotonda al multiplo di 30min PRECEDENTE
-            long slideMs = 60 * 60 * 1000L;
-            long outputTs = (maxEventTime / slideMs) * slideMs;  // floor, non ceil
-            emitTopK(airportMap, outputTs, out);
+            // ts = inizio fisso del dataset, come da specifica:
+            // "timestamp relativo all'inizio della finestra su cui è stata calcolata la classifica"
+            // Per la GlobalWindow l'inizio è sempre l'inizio del dataset.
+            emitTopK(airportMap, DATASET_START_MS, out);
         }
     }
 
