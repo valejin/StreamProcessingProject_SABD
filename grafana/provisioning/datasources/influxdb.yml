@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB-SABD
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux          # InfluxDB 2.x usa Flux come linguaggio di query
+      organization: sabd
+      defaultBucket: flights
+      tlsSkipVerify: true
+    secureJsonData:
+      token: sabd-influx-token-2025
+    isDefault: true
+    editable: true

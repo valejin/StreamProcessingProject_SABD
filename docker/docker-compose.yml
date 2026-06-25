@@ -33,6 +33,48 @@ services:
     networks:
       - sabd-network
 
+  # ─── InfluxDB (storage per metriche time-series) ────────────────
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpass
+      DOCKER_INFLUXDB_INIT_ORG: sabd
+      DOCKER_INFLUXDB_INIT_BUCKET: flights
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: sabd-influx-token-2025
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - sabd-network
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Grafana (dashboard) ─────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    depends_on:
+      - influxdb
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../grafana/provisioning:/etc/grafana/provisioning
+      - ../grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - sabd-network
+
   # ─── Flink JobManager ───────────────────────────────────────────
   flink-jobmanager:
     image: flink:1.18-java11
@@ -47,6 +89,16 @@ services:
         parallelism.default: 1
         heartbeat.interval: 10000
         heartbeat.timeout: 120000
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: flights
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: sabd-influx-token-2025
+      INFLUXDB_ORG: sabd
+      INFLUXDB_BUCKET: flights
+      Q1_OUTPUT_PATH: /results/q1_output.csv
+      Q2_OUTPUT_PATH_1H: /results/q2_output_1h.csv
+      Q2_OUTPUT_PATH_6H: /results/q2_output_6h.csv
+      Q2_OUTPUT_PATH_GLOBAL: /results/q2_output_global.csv
     volumes:
       - ../Results:/results
     networks:
@@ -66,6 +118,12 @@ services:
         parallelism.default: 1
         heartbeat.interval: 10000
         heartbeat.timeout: 120000
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: flights
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: sabd-influx-token-2025
+      INFLUXDB_ORG: sabd
+      INFLUXDB_BUCKET: flights
     volumes:
       - ../Results:/results
     networks:
@@ -77,3 +135,5 @@ networks:
 
 volumes:
   results:
+  influxdb-data:
+  grafana-data:

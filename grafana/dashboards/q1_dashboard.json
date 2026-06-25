@@ -1,0 +1,142 @@
+{
+  "uid": "sabd-q1",
+  "title": "Q1 – Airline Real-Time Monitoring",
+  "description": "Monitoraggio in tempo reale di AA, DL, UA, WN – finestre tumbling 1h",
+  "tags": ["sabd", "q1", "airlines"],
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "schemaVersion": 38,
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Numero di voli per compagnia (finestra 1h)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "P39102A827A7EB03F" },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"flights\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"q1_metrics\")\n  |> filter(fn: (r) => r._field == \"num_flights\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"airline\"], valueColumn: \"_value\")"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean","max"] }
+      }
+    },
+
+    {
+      "id": 2,
+      "title": "Ritardo medio partenza per compagnia (min)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "P39102A827A7EB03F" },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"flights\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"q1_metrics\")\n  |> filter(fn: (r) => r._field == \"dep_delay_mean\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"airline\"], valueColumn: \"_value\")"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 3,
+      "title": "Tasso di cancellazione % per compagnia",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "P39102A827A7EB03F" },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"flights\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"q1_metrics\")\n  |> filter(fn: (r) => r._field == \"cancellation_rate\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"airline\"], valueColumn: \"_value\")"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      }
+    },
+
+    {
+      "id": 4,
+      "title": "Tasso di partenze in ritardo (>15 min) %",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "P39102A827A7EB03F" },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"flights\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"q1_metrics\")\n  |> filter(fn: (r) => r._field == \"late_departure_rate\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"airline\"], valueColumn: \"_value\")"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0
+        }
+      }
+    },
+
+    {
+      "id": 5,
+      "title": "Ultima finestra – Statistiche compagnie",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 7 },
+      "datasource": { "type": "influxdb", "uid": "P39102A827A7EB03F" },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"flights\")\n  |> range(start: -2h)\n  |> filter(fn: (r) => r._measurement == \"q1_metrics\")\n  |> filter(fn: (r) => r._field == \"num_flights\" or r._field == \"dep_delay_mean\" or r._field == \"cancellation_rate\" or r._field == \"late_departure_rate\")\n  |> last()\n  |> pivot(rowKey: [\"airline\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"airline\"])"
+        }
+      ],
+      "options": {
+        "sortBy": [{ "displayName": "airline", "desc": false }]
+      },
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "cancellation_rate" },
+            "properties": [{ "id": "unit", "value": "percent" }] },
+          { "matcher": { "id": "byName", "options": "late_departure_rate" },
+            "properties": [{ "id": "unit", "value": "percent" }] },
+          { "matcher": { "id": "byName", "options": "dep_delay_mean" },
+            "properties": [{ "id": "unit", "value": "m" }] }
+        ]
+      }
+    }
+  ],
+
+  "templating": {
+    "list": [
+      {
+        "type": "datasource",
+        "name": "DS_INFLUXDB-SABD",
+        "label": "InfluxDB",
+        "pluginId": "influxdb",
+        "current": {}
+      }
+    ]
+  }
+}

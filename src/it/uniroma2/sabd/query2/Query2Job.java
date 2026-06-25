@@ -23,9 +23,9 @@ import java.util.*;
  * con il maggior numero di ritardi significativi.
  *
  * Tre finestre temporali (event time):
- *   1h     → SlidingEventTimeWindows(size=1h,  slide=30min)
- *   6h     → SlidingEventTimeWindows(size=6h,  slide=30min)
- *   global → GlobalWindows + ContinuousEventTimeTrigger(30min)
+ *   1h     → SlidingEventTimeWindows(size=1h,  slide=60min)
+ *   6h     → SlidingEventTimeWindows(size=6h,  slide=60min)
+ *   global → GlobalWindows + ContinuousEventTimeTrigger(60min)
  *
  * Approccio: ProcessAllWindowFunction diretta su windowAll.
  * I duplicati prodotti dai pane interni della sliding window vengono
@@ -76,22 +76,22 @@ public class Query2Job {
         DataStream<FlightEvent> completedFlights = flights
                 .filter(e -> e.isCompleted() && e.getOriginAirportId() != null);
 
-        // ── 4. Finestra 1h sliding (slide 30min) ─────────────────────────────
+        // ── 4. Finestra 1h sliding (slide 60min) ─────────────────────────────
         DataStream<String> results1h = completedFlights
-                .windowAll(SlidingEventTimeWindows.of(Time.hours(1), Time.minutes(30)))
+                .windowAll(SlidingEventTimeWindows.of(Time.hours(1), Time.minutes(60)))
                 .process(new Q2SlidingRankingFunction())
                 .map(Query2Job::formatCsvRow);
 
-        // ── 5. Finestra 6h sliding (slide 30min) ─────────────────────────────
+        // ── 5. Finestra 6h sliding (slide 60min) ─────────────────────────────
         DataStream<String> results6h = completedFlights
-                .windowAll(SlidingEventTimeWindows.of(Time.hours(6), Time.minutes(30)))
+                .windowAll(SlidingEventTimeWindows.of(Time.hours(6), Time.minutes(60)))
                 .process(new Q2SlidingRankingFunction())
                 .map(Query2Job::formatCsvRow);
 
-        // ── 6. Finestra global (trigger ogni 30min di event time) ─────────────
+        // ── 6. Finestra global (trigger ogni 60min di event time) ─────────────
         DataStream<String> resultsGlobal = completedFlights
                 .windowAll(GlobalWindows.create())
-                .trigger(ContinuousEventTimeTrigger.of(Time.minutes(30)))
+                .trigger(ContinuousEventTimeTrigger.of(Time.minutes(60)))
                 .process(new Q2GlobalRankingFunction())
                 .map(Query2Job::formatCsvRow);
 
@@ -179,7 +179,7 @@ public class Query2Job {
             }
 
             // Q2GlobalRankingFunction: arrotonda al multiplo di 30min PRECEDENTE
-            long slideMs = 30 * 60 * 1000L;
+            long slideMs = 60 * 60 * 1000L;
             long outputTs = (maxEventTime / slideMs) * slideMs;  // floor, non ceil
             emitTopK(airportMap, outputTs, out);
         }
@@ -193,7 +193,7 @@ public class Query2Job {
                                  long windowStart,
                                  Collector<Q2RankedEntry> out) {
         List<Q2AirportStats> statsList = new ArrayList<>(airportMap.values());
-        statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS);
+        statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS || s.severeDelays == 0);
         statsList.sort(Comparator
                 .comparingInt((Q2AirportStats s) -> s.severeDelays).reversed()
                 .thenComparingInt(s -> s.originAirportId));

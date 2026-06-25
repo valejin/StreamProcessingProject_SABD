@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: SABD-Dashboards
+    orgId: 1
+    folder: SABD Project 2
+    folderUid: sabd-project2
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

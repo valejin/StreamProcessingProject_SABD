@@ -41,3 +41,11 @@ mvn clean package -DskipTests
 
 # Monitora quante righe ci sono (rilancia ogni 30s finché il numero non cambia più)
 docker exec flink-taskmanager wc -l /results/q1_output.csv
+
+
+## Per pulire i dati da Influx per ripopolare eseguendo la query
+cd /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/docker
+docker compose stop influxdb
+docker compose rm -f influxdb
+docker volume rm docker_influxdb-data
+docker compose up -d influxdb
