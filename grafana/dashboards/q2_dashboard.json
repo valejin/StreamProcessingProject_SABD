@@ -1,0 +1,367 @@
+{
+  "uid": "sabd-q2",
+  "title": "Q2 – Airport Delay Ranking",
+  "description": "Top-10 aeroporti per ritardi significativi in partenza (DEP_DELAY > 30min) – finestre 1h, 6h e global (event time)",
+  "tags": [
+    "sabd",
+    "q2",
+    "airports",
+    "flink"
+  ],
+  "timezone": "utc",
+  "refresh": "1m",
+  "time": {
+    "from": "2025-01-01T00:00:00Z",
+    "to": "2025-04-30T23:59:59Z"
+  },
+  "schemaVersion": 38,
+  "panels": [
+    {
+      "id": 10,
+      "title": "Finestra 1h – Top-10 aeroporti per severe_delays (ultima emissione)",
+      "description": "Numero di voli con ritardo >30 min per aeroporto. Ogni barra è un aeroporto (ID numerico BTS), ordinato per rank crescente.",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 10
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "P39102A827A7EB03F"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "lastTs = from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_1h\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> findRecord(fn: (key) => true, idx: 0)\n\nfrom(bucket: \"flights\")\n  |> range(start: lastTs._time, stop: time(v: int(v: lastTs._time) + 60000))\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_1h\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group(columns: [\"rank\", \"origin_airport_id\"])\n  |> first()\n  |> group()\n  |> sort(columns: [\"rank\"])\n  |> map(fn: (r) => ({r with _field: (if int(v: r.rank) < 10 then \"0\" + r.rank else r.rank) + \". airport \" + r.origin_airport_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showUnfilled": true,
+        "text": {}
+      }
+    },
+    {
+      "id": 11,
+      "title": "Finestra 6h – Top-10 aeroporti per severe_delays (ultima emissione)",
+      "description": "Ranking su finestra scorrevole da 6 ore, slide 60 min. Mostra l'ultima classifica emessa da Flink.",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 10
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "P39102A827A7EB03F"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "lastTs = from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_6h\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> findRecord(fn: (key) => true, idx: 0)\n\nfrom(bucket: \"flights\")\n  |> range(start: lastTs._time, stop: time(v: int(v: lastTs._time) + 60000))\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_6h\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group(columns: [\"rank\", \"origin_airport_id\"])\n  |> first()\n  |> group()\n  |> sort(columns: [\"rank\"])\n  |> map(fn: (r) => ({r with _field: (if int(v: r.rank) < 10 then \"0\" + r.rank else r.rank) + \". airport \" + r.origin_airport_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showUnfilled": true,
+        "text": {}
+      }
+    },
+
+    {
+      "id": 40,
+      "title": "Classifica cumulativa – Finestra Global (trigger ogni 60 min di event time)",
+      "description": "Top-10 aeroporti dall'inizio del dataset (2025-01-01). Ultima emissione dal trigger globale, ordinata per rank.",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "P39102A827A7EB03F"
+      },
+      "targets": [
+        {
+          "refId": "rank_severe",
+          "query": "from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group(columns: [\"origin_airport_id\", \"rank\"])\n  |> last()\n  |> map(fn: (r) => ({ r with _field: r.rank + \"|\" + r.origin_airport_id }))\n  |> group(columns: [\"_field\"])"
+        },
+        {
+          "refId": "rank_num",
+          "query": "from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"num_flights\")\n  |> group(columns: [\"origin_airport_id\", \"rank\"])\n  |> last()\n  |> map(fn: (r) => ({ r with _field: r.rank + \"|\" + r.origin_airport_id }))\n  |> group(columns: [\"_field\"])"
+        },
+        {
+          "refId": "rank_mean",
+          "query": "from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"dep_delay_mean\")\n  |> group(columns: [\"origin_airport_id\", \"rank\"])\n  |> last()\n  |> map(fn: (r) => ({ r with _field: r.rank + \"|\" + r.origin_airport_id }))\n  |> group(columns: [\"_field\"])"
+        },
+        {
+          "refId": "rank_max",
+          "query": "from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"dep_delay_max\")\n  |> group(columns: [\"origin_airport_id\", \"rank\"])\n  |> last()\n  |> map(fn: (r) => ({ r with _field: r.rank + \"|\" + r.origin_airport_id }))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Field": "Rank | Aeroporto",
+              "rank_severe": "Ritardi >30 min",
+              "rank_num": "Voli totali",
+              "rank_mean": "Ritardo medio (min)",
+              "rank_max": "Ritardo max (min)"
+            }
+          }
+        }
+      ],
+      "options": {
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "center",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rank_severe"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ritardi >30 min"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "yellow",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 300
+                    },
+                    {
+                      "color": "red",
+                      "value": 700
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rank_num"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Voli totali"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rank_mean"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ritardo medio (min)"
+              },
+              {
+                "id": "unit",
+                "value": "m"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rank_max"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Ritardo max (min)"
+              },
+              {
+                "id": "unit",
+                "value": "m"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-background"
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 60
+                    },
+                    {
+                      "color": "orange",
+                      "value": 120
+                    },
+                    {
+                      "color": "red",
+                      "value": 240
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 50,
+      "title": "Global – Evoluzione ranking cumulativo (severe_delays, tutti i rank)",
+      "description": "Ogni serie è un aeroporto che compare nel top-10 globale nel corso del tempo. Permette di vedere come la classifica si consolida man mano che arrivano i dati.",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "P39102A827A7EB03F"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "lastTs = from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> findRecord(fn: (key) => true, idx: 0)\n\nfrom(bucket: \"flights\")\n  |> range(start: lastTs._time, stop: time(v: int(v: lastTs._time) + 60000))\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group(columns: [\"rank\", \"origin_airport_id\"])\n  |> first()\n  |> group()\n  |> sort(columns: [\"rank\"])\n  |> map(fn: (r) => ({r with _field: (if int(v: r.rank) < 10 then \"0\" + r.rank else r.rank) + \". airport \" + r.origin_airport_id}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "gradient",
+          "placement": "right",
+          "calcs": [
+            "max",
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "datasource",
+        "name": "DS_INFLUXDB-SABD",
+        "label": "InfluxDB",
+        "pluginId": "influxdb",
+        "current": {}
+      }
+    ]
+  }
+}
