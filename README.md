@@ -9,7 +9,7 @@ docker compose up -d
 cd /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD
 python3 producer/kafka_producer.py
 ## Lancio il producer fast (dura 5 min replay)
-TIME_SCALE_FACTOR=360000 python3 kafka_producer.py 
+TIME_SCALE_FACTOR=360000 python3 producer/kafka_producer.py 
 
 
 ## crea il topic flight (da fare dopo ogni docker compose up)
@@ -31,6 +31,9 @@ flink run \
 Quando finisce, vai su http://localhost:8081 → Submit New Job → + Add New e carica il file:
 C:\Users\Valen\Desktop\SreamProcessingProject_SABD\SreamProcessingProject_SABD\target\SreamProcessingProject_SABD-1.0-SNAPSHOT.jar
 Poi imposta Entry Class: it.uniroma2.sabd.query1.Query1Job e clicca Submit.
+
+# Query 2
+it.uniroma2.sabd.query2.Query2Job
 
 ## per monitorare l'output man mano che le finestre si chiudono
 docker exec flink-jobmanager tail -f /results/q1_output.csv

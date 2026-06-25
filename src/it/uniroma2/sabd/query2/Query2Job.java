@@ -3,6 +3,8 @@ package it.uniroma2.sabd.query2;
 import it.uniroma2.sabd.model.FlightEvent;
 import it.uniroma2.sabd.utils.CsvOutputFormatter;
 import it.uniroma2.sabd.utils.FlinkSourceBuilder;
+import it.uniroma2.sabd.utils.InfluxDbLineProtocol;
+import it.uniroma2.sabd.utils.InfluxDbSink;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -30,8 +32,10 @@ import java.util.*;
  *
  * Approccio: ProcessAllWindowFunction diretta su windowAll.
  * I duplicati prodotti dai pane interni della sliding window vengono
- * eliminati nel sink tramite un HashSet che tiene traccia delle righe
+ * eliminati nel sink CSV tramite un HashSet che tiene traccia delle righe
  * già scritte (deduplicazione basata sul contenuto della riga CSV).
+ * Il sink InfluxDB non necessita di deduplicazione: tag identici con lo
+ * stesso timestamp sovrascrivono il punto precedente (upsert nativo).
  *
  * Per la finestra global, il timestamp di output è il massimo event time
  * visto tra gli elementi della finestra (più significativo di
@@ -50,6 +54,10 @@ public class Query2Job {
             System.getenv().getOrDefault("Q2_OUTPUT_PATH_6H", "/results/q2_output_6h.csv");
     private static final String OUTPUT_PATH_GLOBAL =
             System.getenv().getOrDefault("Q2_OUTPUT_PATH_GLOBAL", "/results/q2_output_global.csv");
+
+    // Flag per abilitare/disabilitare il sink InfluxDB senza ricompilare
+    private static final boolean INFLUXDB_ENABLED =
+            Boolean.parseBoolean(System.getenv().getOrDefault("INFLUXDB_ENABLED", "true"));
 
     private static final int MIN_FLIGHTS = 30;
 
@@ -79,30 +87,48 @@ public class Query2Job {
                 .filter(e -> e.isCompleted() && e.getOriginAirportId() != null);
 
         // ── 4. Finestra 1h sliding (slide 60min) ─────────────────────────────
-        DataStream<String> results1h = completedFlights
+        DataStream<Q2RankedEntry> ranked1h = completedFlights
                 .windowAll(SlidingEventTimeWindows.of(Time.hours(1), Time.minutes(60)))
-                .process(new Q2SlidingRankingFunction())
-                .map(Query2Job::formatCsvRow);
+                .process(new Q2SlidingRankingFunction());
 
         // ── 5. Finestra 6h sliding (slide 60min) ─────────────────────────────
-        DataStream<String> results6h = completedFlights
+        DataStream<Q2RankedEntry> ranked6h = completedFlights
                 .windowAll(SlidingEventTimeWindows.of(Time.hours(6), Time.minutes(60)))
-                .process(new Q2SlidingRankingFunction())
-                .map(Query2Job::formatCsvRow);
+                .process(new Q2SlidingRankingFunction());
 
         // ── 6. Finestra global (trigger ogni 60min di event time) ─────────────
-        DataStream<String> resultsGlobal = completedFlights
+        DataStream<Q2RankedEntry> rankedGlobal = completedFlights
                 .windowAll(GlobalWindows.create())
                 .trigger(ContinuousEventTimeTrigger.of(Time.minutes(60)))
-                .process(new Q2GlobalRankingFunction())
-                .map(Query2Job::formatCsvRow);
+                .process(new Q2GlobalRankingFunction());
 
-        // ── 7. Sink con header e deduplicazione ───────────────────────────────
-        writeWithHeader(results1h,     OUTPUT_PATH_1H);
-        writeWithHeader(results6h,     OUTPUT_PATH_6H);
-        writeWithHeader(resultsGlobal, OUTPUT_PATH_GLOBAL);
+        // ── 7. Sink CSV con header e deduplicazione ───────────────────────────
+        writeWithHeader(ranked1h.map(Query2Job::formatCsvRow),     OUTPUT_PATH_1H);
+        writeWithHeader(ranked6h.map(Query2Job::formatCsvRow),     OUTPUT_PATH_6H);
+        writeWithHeader(rankedGlobal.map(Query2Job::formatCsvRow), OUTPUT_PATH_GLOBAL);
 
-        // ── 8. Esecuzione ─────────────────────────────────────────────────────
+        // ── 8. Sink InfluxDB (per Grafana) ────────────────────────────────────
+        if (INFLUXDB_ENABLED) {
+            ranked1h
+                    .map(r -> InfluxDbLineProtocol.fromQ2(r, "1h"))
+                    .addSink(new InfluxDbSink("q2_ranking_1h"))
+                    .setParallelism(1)
+                    .name("InfluxDB Sink Q2 1h");
+
+            ranked6h
+                    .map(r -> InfluxDbLineProtocol.fromQ2(r, "6h"))
+                    .addSink(new InfluxDbSink("q2_ranking_6h"))
+                    .setParallelism(1)
+                    .name("InfluxDB Sink Q2 6h");
+
+            rankedGlobal
+                    .map(r -> InfluxDbLineProtocol.fromQ2(r, "global"))
+                    .addSink(new InfluxDbSink("q2_ranking_global"))
+                    .setParallelism(1)
+                    .name("InfluxDB Sink Q2 Global");
+        }
+
+        // ── 9. Esecuzione ─────────────────────────────────────────────────────
         env.execute("SABD Project 2 – Query 2");
     }
 
@@ -117,7 +143,8 @@ public class Query2Job {
      * Nota sui duplicati: la sliding window divide internamente le finestre
      * in pane (segmenti non sovrapposti di durata pari allo slide). Flink può
      * invocare process() più volte con gli stessi dati per la stessa finestra
-     * logica. La deduplicazione viene gestita nel sink tramite HashSet.
+     * logica. La deduplicazione viene gestita nel sink CSV tramite HashSet.
+     * Per InfluxDB non serve: stessa combination tag+timestamp → upsert.
      *
      * Il timestamp "ts" nel CSV è context.window().getStart(): per una finestra
      * 6h con slide 30min il primo start può precedere il dataset (es. 2024-12-31)
@@ -155,8 +182,11 @@ public class Query2Job {
      * Accumula tutti i voli dall'inizio del dataset (GlobalWindow) e produce
      * il ranking cumulativo ad ogni trigger (ogni 60min di event time).
      *
-     * Timestamp di output: massimo event time visto tra gli elementi.
-     * Più leggibile di GlobalWindow.getStart() che vale Long.MIN_VALUE.
+     * Timestamp di output: inizio fisso del dataset (2025-01-01T00:00:00Z),
+     * come da specifica: "timestamp relativo all'inizio della finestra su cui
+     * è stata calcolata la classifica". Per la GlobalWindow l'inizio è sempre
+     * l'inizio del dataset. Più leggibile di GlobalWindow.getStart() che
+     * vale Long.MIN_VALUE.
      */
     public static class Q2GlobalRankingFunction
             extends ProcessAllWindowFunction<FlightEvent, Q2RankedEntry, GlobalWindow> {
@@ -181,9 +211,6 @@ public class Query2Job {
                 stats.addFlight(e.getAirline(), e.getDestAirportId(), e.getDepDelay());
             }
 
-            // ts = inizio fisso del dataset, come da specifica:
-            // "timestamp relativo all'inizio della finestra su cui è stata calcolata la classifica"
-            // Per la GlobalWindow l'inizio è sempre l'inizio del dataset.
             emitTopK(airportMap, DATASET_START_MS, out);
         }
     }
@@ -238,7 +265,7 @@ public class Query2Job {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Sink con header e deduplicazione — pattern identico a Query1Job
+    // Sink CSV con header e deduplicazione — pattern identico a Query1Job
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
