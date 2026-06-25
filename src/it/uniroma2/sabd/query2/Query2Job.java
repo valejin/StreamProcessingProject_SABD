@@ -16,6 +16,7 @@ import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
+import java.time.Duration;
 import java.util.*;
 
 /**
@@ -67,7 +68,8 @@ public class Query2Job {
                 KAFKA_BROKER, KAFKA_TOPIC, "flink-q2-group");
 
         WatermarkStrategy<FlightEvent> watermarkStrategy =
-                FlinkSourceBuilder.buildWatermarkStrategy();
+                FlinkSourceBuilder.buildWatermarkStrategy()
+                        .withIdleness(Duration.ofSeconds(10));
 
         DataStream<FlightEvent> flights = env
                 .fromSource(kafkaSource, watermarkStrategy, "Kafka flights source Q2");
