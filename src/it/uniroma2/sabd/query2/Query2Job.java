@@ -195,21 +195,25 @@ public class Query2Job {
         private static final long DATASET_START_MS =
                 java.time.Instant.parse("2025-01-01T00:00:00Z").toEpochMilli();
 
+        // ← contatore trigger: garantisce influxTs strettamente crescente
+        // non serializzato (transient) perché non serve a Flink per il checkpointing
+        private long triggerIndex = 0;
+
         @Override
         public void process(Context context,
                             Iterable<FlightEvent> elements,
                             Collector<Q2RankedEntry> out) {
 
             Map<Integer, Q2AirportStats> airportMap = new HashMap<>();
-            long maxEventTime = Long.MIN_VALUE;   // ← AGGIUNTO
+            //long maxEventTime = Long.MIN_VALUE;   // ← AGGIUNTO
 
             for (FlightEvent e : elements) {
                 if (e.getOriginAirportId() == null) continue;
 
                 // ← AGGIUNTO: traccia il max event time tra tutti gli elementi
-                if (e.getEventTime() > maxEventTime) {
-                    maxEventTime = e.getEventTime();
-                }
+                //if (e.getEventTime() > maxEventTime) {
+                    //maxEventTime = e.getEventTime();
+                //}
 
                 Q2AirportStats stats = airportMap.computeIfAbsent(
                         e.getOriginAirportId(),
@@ -219,7 +223,13 @@ public class Query2Job {
             }
 
             // triggerTs cresce ad ogni trigger → InfluxDB avrà punti distinti
-            long triggerTs = (maxEventTime != Long.MIN_VALUE) ? maxEventTime : DATASET_START_MS;
+            //long triggerTs = (maxEventTime != Long.MIN_VALUE) ? maxEventTime : DATASET_START_MS;
+
+            // Ogni trigger riceve un timestamp separato di esattamente 60000ms
+            // (= 60 minuti) rispetto al precedente — coerente con l'intervallo
+            // del ContinuousEventTimeTrigger e ben separato in InfluxDB
+            triggerIndex++;
+            long triggerTs = DATASET_START_MS + (triggerIndex * 60_000L);
 
             List<Q2AirportStats> statsList = new ArrayList<>(airportMap.values());
             statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS || s.severeDelays == 0);

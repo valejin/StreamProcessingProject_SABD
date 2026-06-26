@@ -8,26 +8,26 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Sink Flink che scrive su InfluxDB 2.x tramite Line Protocol via HTTP.
  *
- * Utilizza java.net.HttpURLConnection (disponibile nel JDK 11 senza
- * dipendenze aggiuntive) per mantenere il JAR leggero.
+ * Per la global window (e in generale per qualsiasi trigger che emette
+ * più record con lo stesso timestamp), i record vengono bufferati e
+ * scritti in una singola chiamata HTTP atomica.
  *
- * Il Line Protocol di InfluxDB ha la forma:
- *   measurement[,tag_key=tag_value ...] field_key=field_value[,...] [timestamp]
- * dove il timestamp è in nanosecondi (default).
+ * La logica di flush è:
+ *   - se il timestamp del record corrente è DIVERSO dall'ultimo visto
+ *     → flush del buffer precedente, poi aggiungi il nuovo record
+ *   - se il timestamp è UGUALE all'ultimo visto
+ *     → aggiungi al buffer (stesso trigger)
+ *   - al close() → flush finale del buffer residuo
  *
- * Uso tipico:
- *   stream.addSink(new InfluxDbSink("q1_metrics"))
- *         .setParallelism(1);
- *
- * Configurazione tramite variabili d'ambiente (con default per sviluppo):
- *   INFLUXDB_URL    → http://influxdb:8086
- *   INFLUXDB_TOKEN  → sabd-influx-token-2025
- *   INFLUXDB_ORG    → sabd
- *   INFLUXDB_BUCKET → flights
+ * Questo garantisce che tutti i record dello stesso trigger vengano
+ * scritti atomicamente in InfluxDB, eliminando il problema di Grafana
+ * che vede ranking parziali durante il refresh.
  */
 public class InfluxDbSink extends RichSinkFunction<String> {
 
@@ -35,42 +35,89 @@ public class InfluxDbSink extends RichSinkFunction<String> {
 
     private final String measurement;
 
-    // Configurazione (letta all'apertura del sink, non nel costruttore,
-    // per evitare problemi di serializzazione in ambienti distribuiti)
     private transient String writeUrl;
     private transient String token;
 
-    /**
-     * @param measurement nome della measurement InfluxDB (es. "q1_metrics", "q2_ranking")
-     */
+    // Buffer per scrittura atomica per trigger
+    private transient List<String> buffer;
+    private transient long lastTimestamp;
+
     public InfluxDbSink(String measurement) {
         this.measurement = measurement;
     }
 
     @Override
     public void open(Configuration parameters) {
-        String influxUrl = System.getenv().getOrDefault("INFLUXDB_URL",   "http://influxdb:8086");
-        String org       = System.getenv().getOrDefault("INFLUXDB_ORG",   "sabd");
-        String bucket    = System.getenv().getOrDefault("INFLUXDB_BUCKET","flights");
-        token            = System.getenv().getOrDefault("INFLUXDB_TOKEN", "sabd-influx-token-2025");
+        String influxUrl = System.getenv().getOrDefault("INFLUXDB_URL",    "http://influxdb:8086");
+        String org       = System.getenv().getOrDefault("INFLUXDB_ORG",    "sabd");
+        String bucket    = System.getenv().getOrDefault("INFLUXDB_BUCKET", "flights");
+        token            = System.getenv().getOrDefault("INFLUXDB_TOKEN",  "sabd-influx-token-2025");
 
         writeUrl = influxUrl + "/api/v2/write"
                 + "?org="       + org
                 + "&bucket="    + bucket
-                + "&precision=" + "ms";  // timestamp in millisecondi
+                + "&precision=" + "ms";
+
+        buffer        = new ArrayList<>();
+        lastTimestamp = Long.MIN_VALUE;
     }
 
     /**
-     * Scrive una riga in Line Protocol su InfluxDB.
-     *
-     * Il valore {@code lineProtocol} deve già essere formattato correttamente
-     * (vedi InfluxDbLineProtocol per i builder Q1/Q2).
+     * Estrae il timestamp (ultimo token) dalla riga Line Protocol.
+     * Formato: "measurement,tags fields timestamp"
      */
+    private static long extractTimestamp(String lineProtocol) {
+        int lastSpace = lineProtocol.lastIndexOf(' ');
+        if (lastSpace < 0) return Long.MIN_VALUE;
+        try {
+            return Long.parseLong(lineProtocol.substring(lastSpace + 1).trim());
+        } catch (NumberFormatException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
     @Override
     public void invoke(String lineProtocol, Context context) throws IOException {
         if (lineProtocol == null || lineProtocol.isBlank()) return;
 
-        byte[] body = lineProtocol.getBytes(StandardCharsets.UTF_8);
+        long ts = extractTimestamp(lineProtocol);
+
+        if (ts != lastTimestamp && !buffer.isEmpty()) {
+            // Timestamp diverso → flush atomico del trigger precedente
+            flush();
+        }
+
+        buffer.add(lineProtocol);
+        lastTimestamp = ts;
+    }
+
+    /**
+     * Flush finale: scrive i record residui nel buffer.
+     * Chiamato da Flink quando il sink viene chiuso.
+     */
+    @Override
+    public void close() throws Exception {
+        if (!buffer.isEmpty()) {
+            flush();
+        }
+    }
+
+    /**
+     * Scrive tutti i record del buffer in una singola chiamata HTTP.
+     * InfluxDB accetta più righe Line Protocol separate da '\n'.
+     */
+    private void flush() throws IOException {
+        if (buffer.isEmpty()) return;
+
+        // Unisci tutte le righe con newline → una sola chiamata HTTP
+        String body = String.join("\n", buffer);
+        buffer.clear();
+
+        writeToInflux(body);
+    }
+
+    private void writeToInflux(String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
 
         HttpURLConnection conn = (HttpURLConnection) new URL(writeUrl).openConnection();
         conn.setRequestMethod("POST");
@@ -81,13 +128,12 @@ public class InfluxDbSink extends RichSinkFunction<String> {
         conn.setReadTimeout(5_000);
 
         try (OutputStream os = conn.getOutputStream()) {
-            os.write(body);
+            os.write(bytes);
         }
 
         int code = conn.getResponseCode();
         if (code != 204) {
-            // 204 No Content = scrittura OK per InfluxDB 2.x
-            throw new IOException("InfluxDB write failed [" + code + "] for: " + lineProtocol);
+            throw new IOException("InfluxDB write failed [" + code + "] lines:\n" + body);
         }
     }
 }
