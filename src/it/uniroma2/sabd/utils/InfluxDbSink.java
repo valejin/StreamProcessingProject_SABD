@@ -14,31 +14,28 @@ import java.util.List;
 /**
  * Sink Flink che scrive su InfluxDB 2.x tramite Line Protocol via HTTP.
  *
- * Per la global window (e in generale per qualsiasi trigger che emette
- * più record con lo stesso timestamp), i record vengono bufferati e
- * scritti in una singola chiamata HTTP atomica.
- *
- * La logica di flush è:
- *   - se il timestamp del record corrente è DIVERSO dall'ultimo visto
- *     → flush del buffer precedente, poi aggiungi il nuovo record
- *   - se il timestamp è UGUALE all'ultimo visto
- *     → aggiungi al buffer (stesso trigger)
- *   - al close() → flush finale del buffer residuo
- *
- * Questo garantisce che tutti i record dello stesso trigger vengano
- * scritti atomicamente in InfluxDB, eliminando il problema di Grafana
- * che vede ranking parziali durante il refresh.
+ * Strategia di scrittura atomica per trigger:
+ * - I record con lo stesso timestamp vengono bufferati.
+ * - Il flush avviene in due casi:
+ *   1. Arriva un record con timestamp DIVERSO dal precedente → flush del buffer precedente.
+ *   2. Il buffer raggiunge MAX_BATCH_SIZE (10) → flush immediato dello stesso trigger.
+ *      Questo garantisce che l'ultimo trigger venga scritto anche se non arriva
+ *      mai un record con timestamp diverso (caso delle sliding windows alla fine).
+ * - Il close() esegue un flush finale per sicurezza.
  */
 public class InfluxDbSink extends RichSinkFunction<String> {
 
     private static final long serialVersionUID = 1L;
+
+    // Numero massimo di record per trigger (top-10 di Q2)
+    // Quando il buffer raggiunge questa dimensione, flush immediato
+    private static final int MAX_BATCH_SIZE = 10;
 
     private final String measurement;
 
     private transient String writeUrl;
     private transient String token;
 
-    // Buffer per scrittura atomica per trigger
     private transient List<String> buffer;
     private transient long lastTimestamp;
 
@@ -62,10 +59,6 @@ public class InfluxDbSink extends RichSinkFunction<String> {
         lastTimestamp = Long.MIN_VALUE;
     }
 
-    /**
-     * Estrae il timestamp (ultimo token) dalla riga Line Protocol.
-     * Formato: "measurement,tags fields timestamp"
-     */
     private static long extractTimestamp(String lineProtocol) {
         int lastSpace = lineProtocol.lastIndexOf(' ');
         if (lastSpace < 0) return Long.MIN_VALUE;
@@ -82,34 +75,32 @@ public class InfluxDbSink extends RichSinkFunction<String> {
 
         long ts = extractTimestamp(lineProtocol);
 
+        // Caso 1: timestamp diverso → flush del trigger precedente
         if (ts != lastTimestamp && !buffer.isEmpty()) {
-            // Timestamp diverso → flush atomico del trigger precedente
             flush();
         }
 
         buffer.add(lineProtocol);
         lastTimestamp = ts;
+
+        // Caso 2: buffer pieno (10 record = ranking completo) → flush immediato
+        // Garantisce la scrittura anche se non arriva mai un record successivo
+        if (buffer.size() >= MAX_BATCH_SIZE) {
+            flush();
+        }
     }
 
-    /**
-     * Flush finale: scrive i record residui nel buffer.
-     * Chiamato da Flink quando il sink viene chiuso.
-     */
     @Override
     public void close() throws Exception {
+        // Flush finale per eventuali record residui (finestre con < 10 aeroporti)
         if (!buffer.isEmpty()) {
             flush();
         }
     }
 
-    /**
-     * Scrive tutti i record del buffer in una singola chiamata HTTP.
-     * InfluxDB accetta più righe Line Protocol separate da '\n'.
-     */
     private void flush() throws IOException {
         if (buffer.isEmpty()) return;
 
-        // Unisci tutte le righe con newline → una sola chiamata HTTP
         String body = String.join("\n", buffer);
         buffer.clear();
 
