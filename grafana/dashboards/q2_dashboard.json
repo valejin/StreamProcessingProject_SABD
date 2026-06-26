@@ -310,14 +310,14 @@
     },
     {
       "id": 50,
-      "title": "Global – Evoluzione ranking cumulativo (severe_delays, tutti i rank)",
-      "description": "Ogni serie è un aeroporto che compare nel top-10 globale nel corso del tempo. Permette di vedere come la classifica si consolida man mano che arrivano i dati.",
+      "title": "Global – Top-10 aeroporti per severe_delays (cumulativo, ultimo trigger)",
+      "description": "Finestra globale cumulativa: accumula tutti i voli dall'inizio del dataset, aggiornata ogni 60 min di event time. Mostra solo l'ultimo trigger.",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
         "y": 38,
         "w": 24,
-        "h": 9
+        "h": 10
       },
       "datasource": {
         "type": "influxdb",
@@ -326,30 +326,25 @@
       "targets": [
         {
           "refId": "A",
-          "query": "lastTs = from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> findRecord(fn: (key) => true, idx: 0)\n\nfrom(bucket: \"flights\")\n  |> range(start: lastTs._time, stop: time(v: int(v: lastTs._time) + 60000))\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group(columns: [\"rank\", \"origin_airport_id\"])\n  |> first()\n  |> group()\n  |> sort(columns: [\"rank\"])\n  |> map(fn: (r) => ({r with _field: (if int(v: r.rank) < 10 then \"0\" + r.rank else r.rank) + \". airport \" + r.origin_airport_id}))\n  |> group(columns: [\"_field\"])"
+          "query": "lastTs = from(bucket: \"flights\")\n  |> range(start: 2025-01-01T00:00:00Z, stop: 2025-04-30T23:59:59Z)\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> findRecord(fn: (key) => true, idx: 0)\n\nfrom(bucket: \"flights\")\n  |> range(start: lastTs._time, stop: time(v: int(v: lastTs._time) + 1))\n  |> filter(fn: (r) => r._measurement == \"q2_ranking_global\")\n  |> filter(fn: (r) => r._field == \"severe_delays\")\n  |> group(columns: [\"rank\", \"origin_airport_id\"])\n  |> last()\n  |> group()\n  |> sort(columns: [\"rank\"])\n  |> map(fn: (r) => ({r with _field: (if int(v: r.rank) < 10 then \"0\" + r.rank else r.rank) + \". airport \" + r.origin_airport_id}))\n  |> group(columns: [\"_field\"])"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 5
+          "color": { "mode": "palette-classic" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
           }
         }
       },
       "options": {
-        "legend": {
-          "displayMode": "gradient",
-          "placement": "right",
-          "calcs": [
-            "max",
-            "last"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showUnfilled": true,
+        "text": {}
       }
     }
   ],

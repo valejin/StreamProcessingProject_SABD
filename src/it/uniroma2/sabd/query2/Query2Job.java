@@ -201,9 +201,16 @@ public class Query2Job {
                             Collector<Q2RankedEntry> out) {
 
             Map<Integer, Q2AirportStats> airportMap = new HashMap<>();
+            long maxEventTime = Long.MIN_VALUE;   // ← AGGIUNTO
 
             for (FlightEvent e : elements) {
                 if (e.getOriginAirportId() == null) continue;
+
+                // ← AGGIUNTO: traccia il max event time tra tutti gli elementi
+                if (e.getEventTime() > maxEventTime) {
+                    maxEventTime = e.getEventTime();
+                }
+
                 Q2AirportStats stats = airportMap.computeIfAbsent(
                         e.getOriginAirportId(),
                         id -> { Q2AirportStats s = new Q2AirportStats();
@@ -211,7 +218,26 @@ public class Query2Job {
                 stats.addFlight(e.getAirline(), e.getDestAirportId(), e.getDepDelay());
             }
 
-            emitTopK(airportMap, DATASET_START_MS, out);
+            // triggerTs cresce ad ogni trigger → InfluxDB avrà punti distinti
+            long triggerTs = (maxEventTime != Long.MIN_VALUE) ? maxEventTime : DATASET_START_MS;
+
+            List<Q2AirportStats> statsList = new ArrayList<>(airportMap.values());
+            statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS || s.severeDelays == 0);
+            statsList.sort(Comparator
+                    .comparingInt((Q2AirportStats s) -> s.severeDelays).reversed()
+                    .thenComparingInt(s -> s.originAirportId));
+
+            int limit = Math.min(10, statsList.size());
+            for (int i = 0; i < limit; i++) {
+                Q2AirportStats s = statsList.get(i);
+                Q2RankedEntry entry = new Q2RankedEntry(
+                        DATASET_START_MS, i + 1, s.originAirportId,
+                        s.numFlights, s.severeDelays,
+                        s.getDepDelayMean(), s.getDepDelayMaxSafe(),
+                        s.getTopDelayedFlights());
+                entry.influxTs = triggerTs;   // ← timestamp per InfluxDB
+                out.collect(entry);
+            }
         }
     }
 

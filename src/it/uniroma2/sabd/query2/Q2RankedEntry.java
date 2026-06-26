@@ -18,6 +18,8 @@ public class Q2RankedEntry implements Serializable {
     /** Epoch ms dell'inizio della finestra (campo "ts" nel CSV). */
     public long windowStart;
 
+    public long influxTs;      // per InfluxDB (solo global window)
+
     /** Posizione nella classifica (1 = primo). */
     public int rank;
 

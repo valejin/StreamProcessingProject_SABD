@@ -95,7 +95,9 @@ public class InfluxDbLineProtocol {
         sb.append("dep_delay_max=").append(safeDouble(r.depDelayMax));
 
         // timestamp in ms
-        sb.append(" ").append(r.windowStart);
+        //sb.append(" ").append(r.windowStart);
+        long ts = (r.influxTs > 0) ? r.influxTs : r.windowStart;
+        sb.append(" ").append(ts);
 
         return sb.toString();
     }
