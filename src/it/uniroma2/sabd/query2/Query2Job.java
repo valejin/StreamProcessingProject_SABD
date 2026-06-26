@@ -30,16 +30,43 @@ import java.util.*;
  *   6h     → SlidingEventTimeWindows(size=6h,  slide=60min)
  *   global → GlobalWindows + ContinuousEventTimeTrigger(60min)
  *
- * Approccio: ProcessAllWindowFunction diretta su windowAll.
- * I duplicati prodotti dai pane interni della sliding window vengono
- * eliminati nel sink CSV tramite un HashSet che tiene traccia delle righe
- * già scritte (deduplicazione basata sul contenuto della riga CSV).
- * Il sink InfluxDB non necessita di deduplicazione: tag identici con lo
- * stesso timestamp sovrascrivono il punto precedente (upsert nativo).
+ * ── Gestione delle ore notturne (ore senza voli) ────────────────────────────
  *
- * Per la finestra global, il timestamp di output è il massimo event time
- * visto tra gli elementi della finestra (più significativo di
- * GlobalWindow.getStart() che vale Long.MIN_VALUE).
+ * Problema: nelle ore notturne (tipicamente 00:00–05:00) il Producer non invia
+ * voli reali. Il watermark Flink smette di avanzare e il ContinuousEventTimeTrigger
+ * non scatta, producendo buchi nel CSV.
+ *
+ * Soluzione adottata – Heartbeat dal Producer:
+ *   Il Producer inserisce messaggi heartbeat fittizi (flag "heartbeat": true)
+ *   a intervalli di HEARTBEAT_INTERVAL_MS (default 10 min di Event Time)
+ *   ogni volta che il gap tra due eventi reali consecutivi supera
+ *   HEARTBEAT_THRESHOLD_MS (default 5 min di Event Time).
+ *
+ *   Il WatermarkStrategy elabora gli heartbeat normalmente: il loro eventTime
+ *   è un timestamp valido nel gap notturno, quindi fa avanzare il watermark
+ *   e sblocca il trigger.
+ *
+ *   Gli heartbeat vengono filtrati in Flink con e.isHeartbeat() PRIMA di
+ *   qualsiasi aggregazione: non inquinano né Q1 né Q2.
+ *
+ * Vantaggi rispetto alle alternative:
+ *   - Più affidabile di un trigger Processing-Time: il timing del Producer
+ *     è sincronizzato con il TIME_SCALE_FACTOR, mentre un timer wall-clock
+ *     in Flink si desincronizza durante checkpoint o pause del job.
+ *   - Più semplice di un Custom Trigger Event+ProcessingTime.
+ *   - Retrocompatibile: messaggi senza il campo "heartbeat" vengono trattati
+ *     come heartbeat=false (nessuna modifica al comportamento esistente).
+ *
+ * ── Struttura della pipeline ─────────────────────────────────────────────────
+ *
+ * Kafka → WatermarkStrategy → filtro heartbeat+completati → tre windowAll:
+ *   1h sliding → Q2SlidingRankingFunction → CSV + InfluxDB
+ *   6h sliding → Q2SlidingRankingFunction → CSV + InfluxDB
+ *   global     → Q2GlobalRankingFunction  → CSV + InfluxDB
+ *
+ * La deduplicazione dei pane duplicati della sliding window avviene nel sink
+ * CSV tramite HashSet. Il sink InfluxDB non necessita di deduplicazione:
+ * stessa combinazione tag+timestamp → upsert nativo.
  */
 public class Query2Job {
 
@@ -55,13 +82,22 @@ public class Query2Job {
     private static final String OUTPUT_PATH_GLOBAL =
             System.getenv().getOrDefault("Q2_OUTPUT_PATH_GLOBAL", "/results/q2_output_global.csv");
 
-    // Flag per abilitare/disabilitare il sink InfluxDB senza ricompilare
     private static final boolean INFLUXDB_ENABLED =
             Boolean.parseBoolean(System.getenv().getOrDefault("INFLUXDB_ENABLED", "true"));
 
     private static final int MIN_FLIGHTS = 30;
 
+    // Header CSV per le sliding window: ts = inizio della finestra temporale
     private static final String CSV_HEADER =
+            "ts, rank, origin_airport_id, num_flights, severe_delays, " +
+                    "dep_delay_mean, dep_delay_max, delayed_flights";
+
+    // Header CSV per la global window: ts = inizio della finestra globale,
+    // fisso a 2025-01-01 00:00:00 per tutti i trigger (la GlobalWindow non si
+    // chiude mai e inizia sempre dall'inizio del dataset).
+    // La deduplicazione HashSet è disabilitata per questa finestra (sink separato
+    // senza HashSet), quindi ts costante non causa perdita di righe.
+    private static final String CSV_HEADER_GLOBAL =
             "ts, rank, origin_airport_id, num_flights, severe_delays, " +
                     "dep_delay_mean, dep_delay_max, delayed_flights";
 
@@ -82,9 +118,17 @@ public class Query2Job {
         DataStream<FlightEvent> flights = env
                 .fromSource(kafkaSource, watermarkStrategy, "Kafka flights source Q2");
 
-        // ── 3. Pre-filtro: solo voli completati con originAirportId valido ────
+        // ── 3. Pre-filtro: scarta heartbeat e voli non completati ─────────────
+        //
+        // IMPORTANTE: il filtro degli heartbeat deve avvenire DOPO l'assegnazione
+        // del watermark (fromSource) e PRIMA delle finestre. In questo modo:
+        //   - Il WatermarkStrategy vede gli heartbeat → il watermark avanza.
+        //   - Le finestre ricevono solo voli reali → le statistiche sono corrette.
+        //
+        // NON filtrare gli heartbeat direttamente nella sorgente o nel
+        // WatermarkStrategy: si perderebbe l'avanzamento del watermark.
         DataStream<FlightEvent> completedFlights = flights
-                .filter(e -> e.isCompleted() && e.getOriginAirportId() != null);
+                .filter(e -> !e.isHeartbeat() && e.isCompleted() && e.getOriginAirportId() != null);
 
         // ── 4. Finestra 1h sliding (slide 60min) ─────────────────────────────
         DataStream<Q2RankedEntry> ranked1h = completedFlights
@@ -97,15 +141,29 @@ public class Query2Job {
                 .process(new Q2SlidingRankingFunction());
 
         // ── 6. Finestra global (trigger ogni 60min di event time) ─────────────
+        //
+        // Con gli heartbeat, il watermark avanza regolarmente anche di notte:
+        // il ContinuousEventTimeTrigger scatta ogni 60 min di Event Time
+        // senza buchi, indipendentemente dalla presenza di voli reali.
         DataStream<Q2RankedEntry> rankedGlobal = completedFlights
                 .windowAll(GlobalWindows.create())
                 .trigger(ContinuousEventTimeTrigger.of(Time.minutes(60)))
                 .process(new Q2GlobalRankingFunction());
 
         // ── 7. Sink CSV con header e deduplicazione ───────────────────────────
-        writeWithHeader(ranked1h.map(Query2Job::formatCsvRow),     OUTPUT_PATH_1H);
-        writeWithHeader(ranked6h.map(Query2Job::formatCsvRow),     OUTPUT_PATH_6H);
-        writeWithHeader(rankedGlobal.map(Query2Job::formatCsvRow), OUTPUT_PATH_GLOBAL);
+        //
+        // La global window usa formatCsvRowGlobal + CSV_HEADER_GLOBAL:
+        //   - ts = DATASET_START_MS (2025-01-01 00:00:00): inizio semantico della
+        //     GlobalWindow, costante per tutti i trigger
+        //   - influxTs = ora virtuale del trigger (07:00, 08:00, ...): distinto per
+        //     ogni scatto, usato da InfluxDB. Sink senza HashSet → nessuna perdita di righe
+        // Sliding window: deduplicazione HashSet necessaria per i pane duplicati
+        writeWithHeader(ranked1h.map(Query2Job::formatCsvRow),   OUTPUT_PATH_1H);
+        writeWithHeader(ranked6h.map(Query2Job::formatCsvRow),   OUTPUT_PATH_6H);
+        // Global window: NO deduplicazione — ogni trigger emette sempre righe nuove
+        // (le statistiche cumulative cambiano ad ogni trigger), e ts=DATASET_START
+        // è costante per semantica corretta (la finestra inizia dall'inizio del dataset).
+        writeWithoutDedup(rankedGlobal.map(Query2Job::formatCsvRowGlobal), OUTPUT_PATH_GLOBAL, CSV_HEADER_GLOBAL);
 
         // ── 8. Sink InfluxDB (per Grafana) ────────────────────────────────────
         if (INFLUXDB_ENABLED) {
@@ -137,19 +195,8 @@ public class Query2Job {
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Riceve tutti i voli completati di una finestra sliding, aggrega per
-     * aeroporto con una HashMap e produce il top-10.
-     *
-     * Nota sui duplicati: la sliding window divide internamente le finestre
-     * in pane (segmenti non sovrapposti di durata pari allo slide). Flink può
-     * invocare process() più volte con gli stessi dati per la stessa finestra
-     * logica. La deduplicazione viene gestita nel sink CSV tramite HashSet.
-     * Per InfluxDB non serve: stessa combination tag+timestamp → upsert.
-     *
-     * Il timestamp "ts" nel CSV è context.window().getStart(): per una finestra
-     * 6h con slide 30min il primo start può precedere il dataset (es. 2024-12-31)
-     * perché Flink allinea le finestre all'epoch. Questo è il comportamento
-     * standard di Flink e viene documentato nella relazione.
+     * Riceve tutti i voli completati (heartbeat già filtrati) di una finestra
+     * sliding, aggrega per aeroporto con una HashMap e produce il top-10.
      */
     public static class Q2SlidingRankingFunction
             extends ProcessAllWindowFunction<FlightEvent, Q2RankedEntry, TimeWindow> {
@@ -163,6 +210,11 @@ public class Query2Job {
             long windowStart = context.window().getStart();
 
             for (FlightEvent e : elements) {
+                // Doppio controllo difensivo: gli heartbeat non dovrebbero arrivare
+                // qui (già filtrati nel pre-filtro), ma se lo facessero avrebbero
+                // originAirportId=null e verrebbero ignorati dal computeIfAbsent.
+                if (e.isHeartbeat() || e.getOriginAirportId() == null) continue;
+
                 Q2AirportStats stats = airportMap.computeIfAbsent(
                         e.getOriginAirportId(),
                         id -> { Q2AirportStats s = new Q2AirportStats();
@@ -182,22 +234,21 @@ public class Query2Job {
      * Accumula tutti i voli dall'inizio del dataset (GlobalWindow) e produce
      * il ranking cumulativo ad ogni trigger (ogni 60min di event time).
      *
-     * Timestamp di output: inizio fisso del dataset (2025-01-01T00:00:00Z),
-     * come da specifica: "timestamp relativo all'inizio della finestra su cui
-     * è stata calcolata la classifica". Per la GlobalWindow l'inizio è sempre
-     * l'inizio del dataset. Più leggibile di GlobalWindow.getStart() che
-     * vale Long.MIN_VALUE.
+     * Con gli heartbeat, il trigger scatta regolarmente anche di notte:
+     * il ranking globale viene aggiornato ogni ora virtuale senza buchi,
+     * riflettendo l'accumulo progressivo di tutti i voli fino a quell'istante.
+     *
+     * Timestamp di output: inizio fisso del dataset (2025-01-01T00:00:00Z).
+     * Il timestamp registrato è l'inizio dell'ora virtuale del trigger,
+     * calcolato come floor(maxEventTime / 60min) * 60min — coerente con
+     * il ts della finestra 1h e corretto per la visualizzazione in Grafana.
      */
     public static class Q2GlobalRankingFunction
             extends ProcessAllWindowFunction<FlightEvent, Q2RankedEntry, GlobalWindow> {
 
-        // Epoch ms di 2025-01-01 00:00:00 UTC — inizio fisso del dataset
+        // Epoch ms di 2025-01-01 00:00:00 UTC — inizio fisso della GlobalWindow
         private static final long DATASET_START_MS =
                 java.time.Instant.parse("2025-01-01T00:00:00Z").toEpochMilli();
-
-        // ← contatore trigger: garantisce influxTs strettamente crescente
-        // non serializzato (transient) perché non serve a Flink per il checkpointing
-        private long triggerIndex = 0;
 
         @Override
         public void process(Context context,
@@ -205,15 +256,17 @@ public class Query2Job {
                             Collector<Q2RankedEntry> out) {
 
             Map<Integer, Q2AirportStats> airportMap = new HashMap<>();
-            //long maxEventTime = Long.MIN_VALUE;   // ← AGGIUNTO
+            long maxEventTime = Long.MIN_VALUE;
 
             for (FlightEvent e : elements) {
-                if (e.getOriginAirportId() == null) continue;
+                // Gli heartbeat non arrivano qui (filtrati nel pre-filtro),
+                // ma il controllo difensivo garantisce correttezza anche in
+                // configurazioni inusuali (es. filtro rimosso per debug).
+                if (e.isHeartbeat() || e.getOriginAirportId() == null) continue;
 
-                // ← AGGIUNTO: traccia il max event time tra tutti gli elementi
-                //if (e.getEventTime() > maxEventTime) {
-                    //maxEventTime = e.getEventTime();
-                //}
+                if (e.getEventTime() > maxEventTime) {
+                    maxEventTime = e.getEventTime();
+                }
 
                 Q2AirportStats stats = airportMap.computeIfAbsent(
                         e.getOriginAirportId(),
@@ -222,14 +275,17 @@ public class Query2Job {
                 stats.addFlight(e.getAirline(), e.getDestAirportId(), e.getDepDelay());
             }
 
-            // triggerTs cresce ad ogni trigger → InfluxDB avrà punti distinti
-            //long triggerTs = (maxEventTime != Long.MIN_VALUE) ? maxEventTime : DATASET_START_MS;
-
-            // Ogni trigger riceve un timestamp separato di esattamente 60000ms
-            // (= 60 minuti) rispetto al precedente — coerente con l'intervallo
-            // del ContinuousEventTimeTrigger e ben separato in InfluxDB
-            triggerIndex++;
-            long triggerTs = DATASET_START_MS + (triggerIndex * 60_000L);
+            // influxTs: usato da InfluxDB per distinguere snapshot consecutivi.
+            // Ricavato come floor(maxEventTime / 60min) * 60min — corrisponde
+            // all'inizio dell'ora virtuale del trigger (07:00, 08:00, ...) ed è
+            // strettamente crescente, necessario per la corretta visualizzazione
+            // in Grafana.
+            // ProcessAllWindowFunction.Context non espone currentWatermark(),
+            // quindi tracciamo il massimo event time manualmente.
+            final long INTERVAL_MS = 60 * 60 * 1000L;
+            long influxTs = (maxEventTime != Long.MIN_VALUE)
+                    ? (maxEventTime / INTERVAL_MS) * INTERVAL_MS
+                    : DATASET_START_MS;
 
             List<Q2AirportStats> statsList = new ArrayList<>(airportMap.values());
             statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS || s.severeDelays == 0);
@@ -240,12 +296,16 @@ public class Query2Job {
             int limit = Math.min(10, statsList.size());
             for (int i = 0; i < limit; i++) {
                 Q2AirportStats s = statsList.get(i);
+                // windowStart = DATASET_START_MS: ts nel CSV è sempre l'inizio
+                // della GlobalWindow (2025-01-01 00:00:00), semanticamente corretto.
+                // influxTs = ora virtuale del trigger: distinto per ogni scatto,
+                // evita collisioni in InfluxDB.
                 Q2RankedEntry entry = new Q2RankedEntry(
                         DATASET_START_MS, i + 1, s.originAirportId,
                         s.numFlights, s.severeDelays,
                         s.getDepDelayMean(), s.getDepDelayMaxSafe(),
                         s.getTopDelayedFlights());
-                entry.influxTs = triggerTs;   // ← timestamp per InfluxDB
+                entry.influxTs = influxTs;
                 out.collect(entry);
             }
         }
@@ -300,25 +360,58 @@ public class Query2Job {
                 sb.toString());
     }
 
+    /**
+     * Formatta una riga CSV per la global window.
+     *
+     * Usa {@code windowStart} come timestamp, che per la global window è sempre
+     * {@code DATASET_START_MS} (2025-01-01 00:00:00): l'inizio semanticamente
+     * corretto della GlobalWindow, che non si chiude mai.
+     * La deduplicazione HashSet è disabilitata per questo sink (writeWithoutDedup),
+     * quindi ts costante non causa perdita di righe tra trigger consecutivi.
+     */
+    private static String formatCsvRowGlobal(Q2RankedEntry r) {
+        StringBuilder sb = new StringBuilder("[");
+        if (r.delayedFlights != null && !r.delayedFlights.isEmpty()) {
+            for (int i = 0; i < r.delayedFlights.size(); i++) {
+                sb.append(r.delayedFlights.get(i).toString());
+                if (i < r.delayedFlights.size() - 1) sb.append(", ");
+            }
+        }
+        sb.append("]");
+
+        return String.join(", ",
+                CsvOutputFormatter.formatTimestamp(r.windowStart),
+                String.valueOf(r.rank),
+                String.valueOf(r.originAirportId),
+                String.valueOf(r.numFlights),
+                String.valueOf(r.severeDelays),
+                CsvOutputFormatter.formatDouble(r.depDelayMean),
+                CsvOutputFormatter.formatDouble(r.depDelayMax),
+                sb.toString());
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
-    // Sink CSV con header e deduplicazione — pattern identico a Query1Job
+    // Sink CSV con header e deduplicazione
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
      * Scrive l'header e aggiunge un sink in append con deduplicazione.
-     *
-     * La deduplicazione tramite HashSet elimina le righe duplicate prodotte
-     * dai pane interni della sliding window: due righe identiche (stesso
-     * timestamp, stesso rank, stesso aeroporto, stessi valori) vengono
-     * scritte una sola volta.
-     *
-     * Il HashSet cresce con il numero di righe uniche scritte (~57.000 su
-     * 4 mesi con slide 30min): memoria accettabile su singolo nodo.
+     * Usa CSV_HEADER come header predefinito (per sliding window).
      */
     private static void writeWithHeader(DataStream<String> stream, String outputPath) {
+        writeWithHeader(stream, outputPath, CSV_HEADER);
+    }
+
+    /**
+     * Scrive l'header specificato e aggiunge un sink in append con deduplicazione.
+     * Usato per le sliding window: l'HashSet elimina le righe duplicate prodotte
+     * dai pane interni di Flink.
+     */
+    private static void writeWithHeader(DataStream<String> stream, String outputPath,
+                                        String header) {
         try (java.io.PrintWriter pw = new java.io.PrintWriter(
                 new java.io.FileWriter(outputPath, false))) {
-            pw.println(CSV_HEADER);
+            pw.println(header);
         } catch (java.io.IOException e) {
             throw new RuntimeException("Impossibile scrivere l'header in " + outputPath, e);
         }
@@ -335,11 +428,48 @@ public class Query2Job {
 
             @Override
             public void invoke(String value, Context context) {
-                // seen.add() restituisce true solo se la riga non era già presente
                 if (seen.add(value)) {
                     writer.println(value);
                     writer.flush();
                 }
+            }
+
+            @Override
+            public void close() {
+                if (writer != null) writer.close();
+            }
+        }).setParallelism(1);
+    }
+
+    /**
+     * Scrive l'header e aggiunge un sink in append SENZA deduplicazione.
+     * Usato per la global window: ogni trigger produce righe con ts costante
+     * (DATASET_START_MS) ma statistiche sempre diverse (cumulative crescenti),
+     * quindi non ci sono duplicati reali da eliminare. L'HashSet causerebbe
+     * invece la perdita di righe legittime quando le statistiche di un aeroporto
+     * non cambiano tra due trigger consecutivi.
+     */
+    private static void writeWithoutDedup(DataStream<String> stream, String outputPath,
+                                          String header) {
+        try (java.io.PrintWriter pw = new java.io.PrintWriter(
+                new java.io.FileWriter(outputPath, false))) {
+            pw.println(header);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("Impossibile scrivere l'header in " + outputPath, e);
+        }
+
+        stream.addSink(new org.apache.flink.streaming.api.functions.sink.RichSinkFunction<String>() {
+            private transient java.io.PrintWriter writer;
+
+            @Override
+            public void open(org.apache.flink.configuration.Configuration parameters) throws Exception {
+                writer = new java.io.PrintWriter(new java.io.FileWriter(outputPath, true));
+            }
+
+            @Override
+            public void invoke(String value, Context context) {
+                writer.println(value);
+                writer.flush();
             }
 
             @Override

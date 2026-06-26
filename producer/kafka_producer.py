@@ -8,12 +8,16 @@ Responsabilità del Producer:
   3. SORT           – ordina l'intero dataset per event time crescente
   4. REPLAY         – emette gli eventi verso Kafka rispettando le relazioni
                       temporali originali, compresse dal TIME_SCALE_FACTOR
+  5. HEARTBEAT      – durante i gap notturni (nessun volo) inserisce messaggi
+                      heartbeat fittizi per mantenere il Watermark Flink attivo
+                      e garantire il trigger della Global Window ogni 60 min
+                      di Event Time anche nelle ore senza traffico aereo.
 
 Scelta progettuale – selezione colonne lato Producer:
   Il dataset BTS contiene ~60 colonne. Il Producer legge e trasmette su Kafka
   solo i campi utili alle query Q1 e Q2, per evitare di appesantire il broker
   e il framework di elaborazione con dati irrilevanti, soprattutto considerando
-  le risolse limitate nell'ambiente di sviluppo.
+  le risorse limitate nell'ambiente di sviluppo.
   Il filtraggio semantico (valori null, voli cancellati/deviati, soglie di
   ritardo) è invece delegato interamente a Flink, che lo applica sul flusso
   in ingresso prima di eseguire le aggregazioni.
@@ -46,27 +50,43 @@ DATASET_DIR = os.getenv("DATASET_DIR",
 #   3600   → 1 ora di event time = 1 s reale  (tutto il dataset ~120 s reali)
 #   360    → 1 ora di event time = 10 s reale (debug: finestre leggibili)
 #   86400  → 1 giorno di event time = 1 s reale (benchmark veloce)
-TIME_SCALE_FACTOR = int(os.getenv("TIME_SCALE_FACTOR", "3600"))
+TIME_SCALE_FACTOR = int(os.getenv("TIME_SCALE_FACTOR", "360000"))
 
 # Dimensione del batch di invio a Kafka (numero di messaggi per flush parziale)
 BATCH_LOG_INTERVAL = 50_000
 
+# ─── Configurazione Heartbeat ─────────────────────────────────────────────────
+#
+# Strategia: quando il gap di Event Time tra due eventi consecutivi supera
+# HEARTBEAT_THRESHOLD_MS, il producer inserisce heartbeat fittizi a intervalli
+# di HEARTBEAT_INTERVAL_MS fino a colmare il gap.
+#
+# Questo mantiene il Watermark Flink attivo durante le ore notturne senza voli,
+# garantendo che il ContinuousEventTimeTrigger scatti ogni 60 min di Event Time
+# anche in assenza di dati reali.
+#
+# I messaggi heartbeat contengono il flag "heartbeat": true e vengono filtrati
+# da Flink prima delle aggregazioni: non inquinano le statistiche Q1 e Q2.
+#
+# HEARTBEAT_THRESHOLD_MS: gap minimo di Event Time (ms) che attiva l'heartbeat.
+#   Default: 5 minuti. Sotto questa soglia non vale la pena interrompere
+#   la sequenza naturale degli eventi (il BoundedOutOfOrderness di 5 min
+#   garantisce già il watermark in questi casi).
+#
+# HEARTBEAT_INTERVAL_MS: distanza tra heartbeat consecutivi (Event Time).
+#   Default: 10 minuti. Con trigger ogni 60 min, 6 heartbeat/ora garantiscono
+#   avanzamento costante del watermark. Ridurre per finestre più piccole.
+HEARTBEAT_THRESHOLD_MS = int(os.getenv("HEARTBEAT_THRESHOLD_MS", str(5 * 60 * 1000)))   # 5 min ET
+HEARTBEAT_INTERVAL_MS  = int(os.getenv("HEARTBEAT_INTERVAL_MS",  str(10 * 60 * 1000)))  # 10 min ET
+
 # ─── Colonne da leggere dai CSV ──────────────────────────────────────────────
-# Vengono letti solo i campi strettamente necessari per Q1 e Q2, per non
-# appesantire Kafka e Flink con le ~50 colonne restanti del dataset BTS
-# che non contribuiscono ad alcuna delle query richieste.
 COLUMNS_TO_READ = [
-    # Identificazione temporale – necessarie per calcolare l'event time
     "YEAR", "MONTH", "DAY_OF_MONTH",
-    "CRS_DEP_TIME",       # orario schedulato di partenza (formato HHMM)
-    # Compagnia aerea (Q1: filtro su AA, DL, UA, WN)
+    "CRS_DEP_TIME",
     "OP_UNIQUE_CARRIER",
-    # Aeroporti (Q2: raggruppamento per aeroporto di partenza)
     "ORIGIN_AIRPORT_ID",
-    "DEST_AIRPORT_ID",    # incluso per la lista voli in ritardo di Q2
-    # Ritardo in partenza (Q1 e Q2: medie, soglie, classifiche)
+    "DEST_AIRPORT_ID",
     "DEP_DELAY",
-    # Stato del volo (Q1 e Q2: distinzione completato/cancellato/deviato)
     "CANCELLED",
     "DIVERTED",
 ]
@@ -88,10 +108,6 @@ log = logging.getLogger(__name__)
 def load_dataset(dataset_dir: str) -> pd.DataFrame:
     """
     Carica e unisce i 4 file CSV mensili presenti in dataset_dir.
-    Legge le colonne dichiarate in COLUMNS_TO_READ: sono inclusi tutti i campi
-    del dataset utili alle query. Le colonne puramente amministrative del BTS
-    (non utili ad alcuna query) vengono escluse già in lettura per contenere
-    l'uso di memoria, senza però fare alcun preprocessing semantico.
     """
     pattern = os.path.join(dataset_dir, "*_T_ONTIME_REPORTING.csv")
     files = sorted(glob.glob(pattern))
@@ -136,21 +152,13 @@ def compute_event_time(df: pd.DataFrame) -> pd.DataFrame:
     """
     Calcola la colonna 'event_time_ms' (epoch ms, int64) a partire da
     YEAR, MONTH, DAY_OF_MONTH, CRS_DEP_TIME.
-
-    CRS_DEP_TIME è nel formato HHMM (es. 835 → 08:35, 1425 → 14:25).
-    I casi anomali (2400, NaT, valori fuori range) portano allo scarto della riga.
-
-    Usiamo un approccio vettorizzato (pd.to_datetime su colonne separate) invece
-    di apply() riga per riga: ~10-20x più veloce su 2.2M righe.
     """
     log.info("Calcolo event time (vettorizzato)...")
 
-    # Estrai ora e minuto da CRS_DEP_TIME in modo vettorizzato
     crs = df["CRS_DEP_TIME"].astype("Int32")
     hour   = (crs // 100).astype("Int16")
     minute = (crs %  100).astype("Int16")
 
-    # Maschera valori anomali: ore >= 24 o minuti >= 60
     valid_mask = (
             df["YEAR"].notna() & df["MONTH"].notna() & df["DAY_OF_MONTH"].notna() &
             crs.notna() &
@@ -159,14 +167,12 @@ def compute_event_time(df: pd.DataFrame) -> pd.DataFrame:
     )
     n_invalid = (~valid_mask).sum()
     if n_invalid > 0:
-        log.warning("Scartate %d righe con CRS_DEP_TIME anomalo o date mancanti",
-                    n_invalid)
+        log.warning("Scartate %d righe con CRS_DEP_TIME anomalo o date mancanti", n_invalid)
 
     df = df[valid_mask].copy()
     hour   = hour[valid_mask]
     minute = minute[valid_mask]
 
-    # Costruisci datetime vettorizzato
     event_dt = pd.to_datetime({
         "year":  df["YEAR"].astype(int),
         "month": df["MONTH"].astype(int),
@@ -175,17 +181,14 @@ def compute_event_time(df: pd.DataFrame) -> pd.DataFrame:
         "minute": minute.astype(int),
     }, errors="coerce")
 
-    # Eventuali righe che pd.to_datetime non riesce a costruire
     invalid_dt = event_dt.isna()
     if invalid_dt.any():
-        log.warning("Ulteriori %d righe scartate per data non costruibile",
-                    invalid_dt.sum())
+        log.warning("Ulteriori %d righe scartate per data non costruibile", invalid_dt.sum())
         df = df[~invalid_dt.values]
         event_dt = event_dt[~invalid_dt]
 
-    # Salva l'epoch in millisecondi (int64) – usato per ordinamento e sleep
     df["event_time_ms"] = (
-            event_dt.view("int64") // 1_000_000  # ns → ms
+            event_dt.view("int64") // 1_000_000
     ).values
 
     log.info("Event time calcolato. Righe valide: %d", len(df))
@@ -208,21 +211,12 @@ def sort_by_event_time(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_message(row: dict) -> bytes:
     """
-    Costruisce il messaggio JSON da inviare a Kafka selezionando esplicitamente
-    i campi utili alle query Q1 e Q2.
-
-    I valori mancanti (pandas NA/NaN) vengono trasmessi come JSON null: la scelta
-    su come trattarli (ignorare la tupla, sostituire con zero, ecc.) è delegata
-    a Flink, che la applica in base alla semantica di ciascuna query.
-
-    L'event_time calcolato dal Producer viene incluso in formato ISO 8601,
-    pronto per essere assegnato come timestamp Flink tramite WatermarkStrategy.
+    Costruisce il messaggio JSON da inviare a Kafka per un volo reale.
+    Il campo "heartbeat" è assente (o False) per i voli normali.
     """
     def to_python(val):
-        """Converte i tipi pandas/numpy in tipi Python nativi serializzabili."""
         if pd.isna(val):
             return None
-        # I tipi numpy Int8/Int16/Int32 non sono serializzabili da json.dumps
         if hasattr(val, "item"):
             return val.item()
         return val
@@ -238,76 +232,136 @@ def build_message(row: dict) -> bytes:
         "dep_delay":        to_python(row["DEP_DELAY"]),
         "cancelled":        to_python(row["CANCELLED"]),
         "diverted":         to_python(row["DIVERTED"]),
+        # heartbeat assente → Flink lo tratta come False (nessuna modifica al deserializer)
     }
 
     return json.dumps(record, separators=(",", ":")).encode("utf-8")
 
 
+def build_heartbeat_message(event_time_ms: int) -> bytes:
+    """
+    Costruisce un messaggio heartbeat fittizio.
+
+    Il messaggio ha event_time impostato all'orario del gap notturno e il flag
+    "heartbeat": true. Flink lo usa esclusivamente per far avanzare il Watermark:
+    il filtro `e.isHeartbeat()` lo scarta prima di qualsiasi aggregazione.
+
+    Tutti gli altri campi sono null per chiarezza semantica e per garantire che
+    un eventuale bug nel filtro non produca conteggi errati nelle statistiche.
+    """
+    record = {
+        "event_time": datetime.utcfromtimestamp(
+            event_time_ms / 1000
+        ).strftime("%Y-%m-%dT%H:%M:%S"),
+        "heartbeat": True,
+        "airline":           None,
+        "origin_airport_id": None,
+        "dest_airport_id":   None,
+        "crs_dep_time":      None,
+        "dep_delay":         None,
+        "cancelled":         0,
+        "diverted":          0,
+    }
+    return json.dumps(record, separators=(",", ":")).encode("utf-8")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# FASE 4 – REPLAY CON ACCELERAZIONE TEMPORALE
+# FASE 4 – REPLAY CON ACCELERAZIONE TEMPORALE E HEARTBEAT
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def send_with_timing(producer: KafkaProducer,
+                     payload: bytes,
+                     et_offset_ms: int,
+                     real_start: float) -> None:
+    """
+    Attende il momento corretto (wall-clock) prima di inviare il messaggio,
+    in base all'offset di Event Time e al TIME_SCALE_FACTOR.
+
+    Separato in funzione per essere riutilizzato sia dai voli reali sia
+    dagli heartbeat senza duplicare la logica di timing.
+    """
+    real_target = real_start + et_offset_ms / (TIME_SCALE_FACTOR * 1000)
+    sleep_time  = real_target - time.monotonic()
+    if sleep_time > 0:
+        time.sleep(sleep_time)
+    producer.send(TOPIC_NAME, value=payload)
+
 
 def replay(df: pd.DataFrame, producer: KafkaProducer) -> None:
     """
     Emette gli eventi verso Kafka rispettando le relazioni temporali originali,
     compresse dal TIME_SCALE_FACTOR.
 
-    Strategia di timing:
-    Invece di calcolare il delta tra due eventi consecutivi (che si azzera spesso
-    perché molti voli condividono lo stesso CRS_DEP_TIME), usiamo un'ancora
-    assoluta:
-      - real_start    = wall-clock al momento della prima emissione
-      - et_start_ms   = event time del primo evento
-    Per ogni evento:
-      - et_offset_ms  = event_time_ms - et_start_ms
-      - real_target   = real_start + et_offset_ms / TIME_SCALE_FACTOR
-      - sleep(max(0, real_target - now))
+    Durante i gap di Event Time superiori a HEARTBEAT_THRESHOLD_MS (default 5 min),
+    inserisce heartbeat fittizi a intervalli di HEARTBEAT_INTERVAL_MS (default 10 min)
+    per mantenere il Watermark Flink attivo nelle ore notturne senza voli.
 
-    Questo garantisce che le relazioni temporali tra eventi siano rispettate anche
-    quando molti eventi hanno lo stesso timestamp (vengono emessi tutti
-    "contemporaneamente" senza sleep tra loro).
+    Strategia di timing (invariata rispetto alla versione senza heartbeat):
+    - real_start  = wall-clock al momento della prima emissione
+    - et_start_ms = event time del primo evento
+    Ogni messaggio (reale o heartbeat) attende:
+      real_target = real_start + (event_time_ms - et_start_ms) / (TIME_SCALE_FACTOR * 1000)
     """
     n_total = len(df)
     log.info("Inizio replay: %d eventi, TIME_SCALE_FACTOR=%dx", n_total, TIME_SCALE_FACTOR)
     log.info("Durata stimata del replay: ~%.0f secondi",
              (df["event_time_ms"].iloc[-1] - df["event_time_ms"].iloc[0])
              / 1000 / TIME_SCALE_FACTOR)
+    log.info("Heartbeat: threshold=%d min ET, interval=%d min ET",
+             HEARTBEAT_THRESHOLD_MS // 60_000, HEARTBEAT_INTERVAL_MS // 60_000)
 
-    et_start_ms  = df["event_time_ms"].iloc[0]
-    real_start   = time.monotonic()
-    sent         = 0
-    errors       = 0
+    et_start_ms   = df["event_time_ms"].iloc[0]
+    real_start     = time.monotonic()
+    sent_real      = 0
+    sent_heartbeat = 0
+    errors         = 0
+    prev_et_ms     = et_start_ms
 
     for _, row in df.iterrows():
-        # ── Timing ────────────────────────────────────────────────
-        et_offset_ms  = row["event_time_ms"] - et_start_ms
-        real_target   = real_start + et_offset_ms / (TIME_SCALE_FACTOR * 1000)
-        now           = time.monotonic()
-        sleep_time    = real_target - now
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+        curr_et_ms   = row["event_time_ms"]
+        gap_ms       = curr_et_ms - prev_et_ms
 
-        # ── Serializzazione & invio ───────────────────────────────
-        msg = build_message(row)
+        # ── Inserimento heartbeat se gap supera la soglia ─────────────────────
+        if gap_ms > HEARTBEAT_THRESHOLD_MS:
+            # Primo heartbeat: HEARTBEAT_INTERVAL_MS dopo l'ultimo evento reale
+            hb_et_ms = prev_et_ms + HEARTBEAT_INTERVAL_MS
+            while hb_et_ms < curr_et_ms:
+                hb_offset_ms = hb_et_ms - et_start_ms
+                try:
+                    send_with_timing(producer,
+                                     build_heartbeat_message(hb_et_ms),
+                                     hb_offset_ms,
+                                     real_start)
+                    sent_heartbeat += 1
+                except KafkaError as e:
+                    errors += 1
+                    log.error("Errore invio heartbeat ET=%s: %s",
+                              datetime.utcfromtimestamp(hb_et_ms / 1000), e)
+                hb_et_ms += HEARTBEAT_INTERVAL_MS
+
+        # ── Evento reale ──────────────────────────────────────────────────────
+        et_offset_ms = curr_et_ms - et_start_ms
         try:
-            producer.send(TOPIC_NAME, value=msg)
+            send_with_timing(producer, build_message(row), et_offset_ms, real_start)
         except KafkaError as e:
             errors += 1
-            log.error("Errore invio messaggio #%d: %s", sent + 1, e)
+            log.error("Errore invio messaggio #%d: %s", sent_real + 1, e)
 
-        sent += 1
+        sent_real += 1
+        prev_et_ms = curr_et_ms
 
-        # ── Log periodico ─────────────────────────────────────────
-        if sent % BATCH_LOG_INTERVAL == 0:
-            et_current = datetime.fromtimestamp(row["event_time_ms"] / 1000)
-            lag_s = time.monotonic() - real_target
+        # ── Log periodico ─────────────────────────────────────────────────────
+        if sent_real % BATCH_LOG_INTERVAL == 0:
+            et_current = datetime.fromtimestamp(curr_et_ms / 1000)
+            lag_s = time.monotonic() - (real_start + et_offset_ms / (TIME_SCALE_FACTOR * 1000))
             log.info(
-                "Inviati %7d / %7d  |  event time: %s  |  lag: %+.3f s",
-                sent, n_total, et_current, lag_s,
+                "Inviati %7d reali + %5d heartbeat  |  event time: %s  |  lag: %+.3f s",
+                sent_real, sent_heartbeat, et_current, lag_s,
             )
 
     producer.flush()
-    log.info("Replay completato. Inviati: %d  |  Errori: %d", sent, errors)
+    log.info("Replay completato. Reali: %d  |  Heartbeat: %d  |  Errori: %d",
+             sent_real, sent_heartbeat, errors)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -326,15 +380,14 @@ def main() -> None:
     log.info("Connessione a Kafka: %s (topic: %s) ...", KAFKA_BROKER, TOPIC_NAME)
     producer = KafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
-        # Il valore è già bytes (json.dumps().encode()), nessun serializzatore aggiuntivo
-        acks=1,           # conferma dal leader – bilanciamento durabilità/throughput
-        linger_ms=10,     # mini-batching lato producer per ridurre overhead di rete
-        batch_size=65536, # 64 KB per batch (default 16 KB)
-        compression_type="lz4",  # compressione leggera, CPU-friendly
+        acks=1,
+        linger_ms=10,
+        batch_size=65536,
+        compression_type="lz4",
         retries=3,
     )
 
-    # ── Fase 3: Replay ───────────────────────────────────────────
+    # ── Fase 3: Replay con heartbeat ─────────────────────────────
     try:
         replay(df, producer)
     finally:

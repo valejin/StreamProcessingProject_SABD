@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter;
 /**
  * Deserializzatore per i messaggi JSON inviati dal producer Kafka.
  *
- * Formato atteso (esempio):
+ * Formato atteso per un volo reale:
  * {
  *   "event_time":        "2025-01-01T08:35:00",
  *   "airline":           "AA",
@@ -26,15 +26,26 @@ import java.time.format.DateTimeFormatter;
  *   "diverted":          0
  * }
  *
- * Gestione dei valori null:
- *  - dep_delay null  → FlightEvent.depDelay = null
- *    (i voli cancellati spesso non hanno dep_delay; Flink li filtrerà dove necessario)
- *  - cancelled null  → trattato come 0 (non cancellato) per scelta conservativa
- *  - diverted null   → trattato come 0 (non deviato)
- *  - airline null    → FlightEvent.airline = null (sarà filtrato nelle query)
+ * Formato atteso per un heartbeat (tick fittizio notturno):
+ * {
+ *   "event_time": "2025-01-15T02:30:00",
+ *   "heartbeat":  true,
+ *   "airline":           null,
+ *   "origin_airport_id": null,
+ *   "dest_airport_id":   null,
+ *   "crs_dep_time":      null,
+ *   "dep_delay":         null,
+ *   "cancelled":         0,
+ *   "diverted":          0
+ * }
  *
- * L'event_time è in formato ISO 8601 locale (senza timezone): viene interpretato
- * come UTC, coerentemente con come il Producer ha costruito i timestamp.
+ * I messaggi heartbeat vengono deserializzati normalmente: il WatermarkStrategy
+ * legge il loro eventTime e fa avanzare il watermark. Il campo isHeartbeat()
+ * viene poi usato dai filtri in Query1Job e Query2Job per escluderli dalle
+ * aggregazioni prima che entrino nelle finestre.
+ *
+ * Retrocompatibilità: i messaggi senza il campo "heartbeat" (es. prodotti da
+ * versioni precedenti del producer) vengono trattati come heartbeat=false.
  */
 public class FlightEventDeserializer implements DeserializationSchema<FlightEvent> {
 
@@ -44,11 +55,6 @@ public class FlightEventDeserializer implements DeserializationSchema<FlightEven
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
-    /**
-     * ObjectMapper è thread-safe per le operazioni di lettura dopo la configurazione,
-     * ma DeserializationSchema può essere condiviso tra thread: dichiariamo transient
-     * e ricreiamo lazily per sicurezza.
-     */
     private transient ObjectMapper mapper;
 
     private ObjectMapper getMapper() {
@@ -63,9 +69,6 @@ public class FlightEventDeserializer implements DeserializationSchema<FlightEven
         JsonNode node = getMapper().readTree(message);
 
         // ── Event time ────────────────────────────────────────────────────────
-        // Converte la stringa ISO in epoch ms (UTC).
-        // Il Producer ha costruito l'event_time come orario locale del volo
-        // senza informazioni di timezone: lo trattiamo come UTC.
         long eventTimeMs = 0L;
         JsonNode etNode = node.get("event_time");
         if (etNode != null && !etNode.isNull()) {
@@ -73,35 +76,30 @@ public class FlightEventDeserializer implements DeserializationSchema<FlightEven
             eventTimeMs = ldt.toInstant(ZoneOffset.UTC).toEpochMilli();
         }
 
-        // ── Campi stringa ─────────────────────────────────────────────────────
-        String airline = getTextOrNull(node, "airline");
+        // ── Flag heartbeat ────────────────────────────────────────────────────
+        // Retrocompatibile: assente → false (volo reale).
+        JsonNode hbNode = node.get("heartbeat");
+        boolean isHeartbeat = (hbNode != null && !hbNode.isNull() && hbNode.asBoolean(false));
 
-        // ── Campi interi (nullable) ───────────────────────────────────────────
+        // ── Campi volo (null per gli heartbeat per scelta semantica) ──────────
+        String  airline         = getTextOrNull(node, "airline");
         Integer originAirportId = getIntOrNull(node, "origin_airport_id");
         Integer destAirportId   = getIntOrNull(node, "dest_airport_id");
         Integer crsDepTime      = getIntOrNull(node, "crs_dep_time");
+        Integer cancelled       = getIntOrDefault(node, "cancelled", 0);
+        Integer diverted        = getIntOrDefault(node, "diverted",  0);
+        Double  depDelay        = getDoubleOrNull(node, "dep_delay");
 
-        // cancelled e diverted: null → 0 (scelta conservativa documentata nel report)
-        Integer cancelled = getIntOrDefault(node, "cancelled", 0);
-        Integer diverted  = getIntOrDefault(node, "diverted",  0);
-
-        // ── Campi double (nullable) ───────────────────────────────────────────
-        // dep_delay null è frequente per voli cancellati; lo manteniamo null
-        // per distinguerlo da "ritardo zero" nelle aggregazioni.
-        Double depDelay = getDoubleOrNull(node, "dep_delay");
-
-        return new FlightEvent(
+        FlightEvent event = new FlightEvent(
                 eventTimeMs, airline,
                 originAirportId, destAirportId,
                 crsDepTime, depDelay,
                 cancelled, diverted
         );
+        event.setHeartbeat(isHeartbeat);
+        return event;
     }
 
-    /**
-     * Flink chiama isEndOfStream() per sapere se lo stream è terminato.
-     * Per stream Kafka continui, restituisce sempre false.
-     */
     @Override
     public boolean isEndOfStream(FlightEvent nextElement) {
         return false;

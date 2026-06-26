@@ -14,11 +14,14 @@ import java.io.Serializable;
  *  - depDelay          : ritardo in partenza in minuti (DEP_DELAY), può essere null
  *  - cancelled         : 1.0 se cancellato, 0.0 altrimenti (CANCELLED)
  *  - diverted          : 1.0 se deviato, 0.0 altrimenti (DIVERTED)
+ *  - heartbeat         : true se il messaggio è un tick fittizio inviato dal Producer
+ *                        per mantenere il Watermark attivo nelle ore notturne senza voli.
+ *                        I messaggi heartbeat hanno tutti gli altri campi null
+ *                        e devono essere filtrati prima di qualsiasi aggregazione.
  *
  * Flink richiede che i POJO abbiano:
  *  - costruttore no-arg pubblico
  *  - getter e setter pubblici per ogni campo
- *  - campi pubblici oppure getter/setter (usiamo getter/setter per chiarezza)
  */
 public class FlightEvent implements Serializable {
 
@@ -38,8 +41,6 @@ public class FlightEvent implements Serializable {
 
     /**
      * Orario schedulato di partenza in formato HHMM (es. 835 → 08:35).
-     * Usato in Q3 per ricavare la fascia oraria; presente nel messaggio
-     * per completezza anche se Q3 non è richiesta per studenti singoli.
      */
     private Integer crsDepTime;
 
@@ -52,13 +53,26 @@ public class FlightEvent implements Serializable {
 
     /**
      * Flag di cancellazione: 1 = cancellato, 0 = non cancellato.
-     * Il Producer lo trasmette come Int8 → deserializzato come Integer,
-     * poi convertito in boolean tramite isCancelled().
      */
     private Integer cancelled;
 
     /** Flag di deviazione: 1 = deviato, 0 = non deviato. */
     private Integer diverted;
+
+    /**
+     * Flag heartbeat: true se il messaggio è un tick fittizio inserito dal Producer
+     * durante i gap notturni privi di voli, per mantenere il Watermark Flink attivo.
+     *
+     * Un evento heartbeat NON rappresenta un volo reale: tutti gli altri campi
+     * (airline, originAirportId, depDelay, ecc.) sono null.
+     *
+     * Il filtro in Query1Job e Query2Job deve scartare questi eventi PRIMA
+     * di qualsiasi aggregazione tramite il metodo isHeartbeat().
+     *
+     * Il WatermarkStrategy lo elabora normalmente: il suo eventTime è un
+     * timestamp valido nel futuro del gap, quindi fa avanzare il watermark.
+     */
+    private boolean heartbeat = false;
 
     // ─── Costruttori ──────────────────────────────────────────────────────────
 
@@ -77,48 +91,36 @@ public class FlightEvent implements Serializable {
         this.depDelay        = depDelay;
         this.cancelled       = cancelled;
         this.diverted        = diverted;
+        this.heartbeat       = false;
     }
 
     // ─── Metodi di convenienza (semantica di dominio) ─────────────────────────
 
     /**
-     * Restituisce true se il volo è stato cancellato.
-     * Un volo con campo cancelled null è considerato non cancellato
-     * (scelta conservativa: il dato mancante non esclude il volo).
+     * Restituisce true se questo messaggio è un heartbeat fittizio.
+     * Da usare come primo filtro in ogni pipeline di query:
+     *   .filter(e -> !e.isHeartbeat())
      */
+    public boolean isHeartbeat() {
+        return heartbeat;
+    }
+
     public boolean isCancelled() {
         return cancelled != null && cancelled == 1;
     }
 
-    /**
-     * Restituisce true se il volo è stato deviato.
-     */
     public boolean isDiverted() {
         return diverted != null && diverted == 1;
     }
 
-    /**
-     * Restituisce true se il volo è "completato": né cancellato né deviato.
-     * Usato sia in Q1 (conteggio voli completati) sia in Q2 (filtro soglia ritardo).
-     */
     public boolean isCompleted() {
         return !isCancelled() && !isDiverted();
     }
 
-    /**
-     * Restituisce true se il volo ha un ritardo significativo in partenza (> 30 min).
-     * Prerequisito: il volo deve essere completato (non cancellato, non deviato).
-     * Usato in Q2.
-     */
     public boolean hasSevereDelay() {
         return isCompleted() && depDelay != null && depDelay > 30.0;
     }
 
-    /**
-     * Restituisce true se il volo è in ritardo in partenza (> 15 min).
-     * Prerequisito: il volo non deve essere cancellato.
-     * Usato in Q1 per calcolare il tasso di partenze in ritardo.
-     */
     public boolean isLate() {
         return !isCancelled() && depDelay != null && depDelay > 15.0;
     }
@@ -149,8 +151,14 @@ public class FlightEvent implements Serializable {
     public Integer getDiverted()                                { return diverted; }
     public void setDiverted(Integer diverted)                   { this.diverted = diverted; }
 
+    public boolean getHeartbeat()                               { return heartbeat; }
+    public void setHeartbeat(boolean heartbeat)                 { this.heartbeat = heartbeat; }
+
     @Override
     public String toString() {
+        if (heartbeat) {
+            return String.format("FlightEvent{HEARTBEAT, t=%d}", eventTime);
+        }
         return String.format(
                 "FlightEvent{t=%d, airline=%s, origin=%s, dest=%s, delay=%s, cancelled=%s, diverted=%s}",
                 eventTime, airline, originAirportId, destAirportId,
