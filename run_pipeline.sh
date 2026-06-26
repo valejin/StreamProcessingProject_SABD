@@ -50,6 +50,10 @@ Q1_CLASS="it.uniroma2.sabd.query1.Query1Job"
 Q2_CLASS="it.uniroma2.sabd.query2.Query2Job"
 
 FLINK_WAIT_SECONDS=15
+FLINK_SHUTDOWN_WAIT=60   # secondi di attesa dopo il producer prima di cancellare i job
+
+# Array per raccogliere i JobID lanciati in questa sessione
+FLINK_JOB_IDS=()
 
 # ── Controlli prerequisiti ───────────────────────────────────────────────────
 echo -e "\n${BOLD}════════════════════════════════════════════════════${NC}"
@@ -93,7 +97,6 @@ ok "Build completata → ${JAR_LOCAL}"
 echo -e "\n${BOLD}[3/5] Deploy JAR nel container Flink${NC}"
 log "Copio il JAR in ${FLINK_CONTAINER}:${JAR_REMOTE} ..."
 
-# Assicura che la directory di destinazione esista nel container
 docker exec "$FLINK_CONTAINER" mkdir -p /opt/flink/jobs
 
 docker cp "${JAR_LOCAL}" "${FLINK_CONTAINER}:${JAR_REMOTE}" \
@@ -107,14 +110,28 @@ run_flink_job() {
   local label="$1"
   local class="$2"
   log "Submitting ${label}..."
-  docker exec \
+
+  # Cattura l'output di flink run -d per estrarre il JobID
+  local output
+  output=$(docker exec \
     -e KAFKA_BROKER="${KAFKA_BROKER}" \
     "${FLINK_CONTAINER}" \
     flink run -d \
       -c "${class}" \
-      "${JAR_REMOTE}" \
-    || die "Lancio ${label} fallito."
-  ok "${label} inviato a Flink."
+      "${JAR_REMOTE}" 2>&1) || die "Lancio ${label} fallito."
+
+  echo "$output"
+
+  # Estrai il JobID dalla riga "Job has been submitted with JobID <id>"
+  local job_id
+  job_id=$(echo "$output" | grep -oP '(?<=JobID )[a-f0-9]+' || true)
+
+  if [[ -n "$job_id" ]]; then
+    FLINK_JOB_IDS+=("$job_id")
+    ok "${label} inviato a Flink — JobID: ${job_id}"
+  else
+    warn "${label} inviato, ma JobID non estratto dall'output."
+  fi
 }
 
 case "$QUERY" in
@@ -144,8 +161,30 @@ ok "Attesa completata."
 log "Avvio kafka_producer.py ..."
 cd "$PROJECT_ROOT"
 python3 producer/kafka_producer.py
+ok "Producer terminato."
+
+# ── Step 6: Attesa finale + shutdown job Flink ───────────────────────────────
+echo -e "\n${BOLD}[6/6] Shutdown job Flink (attesa ${FLINK_SHUTDOWN_WAIT}s)${NC}"
+log "Producer completato. Aspetto ${FLINK_SHUTDOWN_WAIT}s prima di cancellare i job..."
+
+for i in $(seq "$FLINK_SHUTDOWN_WAIT" -1 1); do
+  printf "\r  ${YELLOW}%2ds rimanenti...${NC}" "$i"
+  sleep 1
+done
+echo ""
+
+if [[ ${#FLINK_JOB_IDS[@]} -eq 0 ]]; then
+  warn "Nessun JobID registrato — cancellazione saltata."
+else
+  for job_id in "${FLINK_JOB_IDS[@]}"; do
+    log "Cancello job ${job_id}..."
+    docker exec "${FLINK_CONTAINER}" flink cancel "${job_id}" 2>&1 \
+      && ok "Job ${job_id} cancellato." \
+      || warn "Job ${job_id} già terminato o non trovato — OK."
+  done
+fi
 
 # ── Fine ─────────────────────────────────────────────────────────────────────
 echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}   Pipeline avviata con successo!                   ${NC}"
+echo -e "${GREEN}${BOLD}   Pipeline completata con successo!                ${NC}"
 echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════${NC}\n"
