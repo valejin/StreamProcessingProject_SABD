@@ -58,3 +58,7 @@ mvn clean package -DskipTests
 it.uniroma2.sabd.query2.Query2Job
 
 TIME_SCALE_FACTOR=360000 python3 producer/kafka_producer.py 
+
+bash run_pipeline.sh q1    # solo Query1Job
+bash run_pipeline.sh q2    # solo Query2Job
+bash run_pipeline.sh all   # entrambi 
