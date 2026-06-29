@@ -16,27 +16,23 @@ import java.time.format.DateTimeFormatter;
  *
  * Formato atteso per un volo reale:
  * {
- *   "event_time":        "2025-01-01T08:35:00",
- *   "airline":           "AA",
- *   "origin_airport_id": 12478,
- *   "dest_airport_id":   11298,
- *   "crs_dep_time":      835,
- *   "dep_delay":         11.0,
- *   "cancelled":         0,
- *   "diverted":          0
+ *   "event_time":          "2025-01-01T08:35:00",
+ *   "kafka_produce_time":  1751000000123,
+ *   "airline":             "AA",
+ *   "origin_airport_id":   12478,
+ *   "dest_airport_id":     11298,
+ *   "crs_dep_time":        835,
+ *   "dep_delay":           11.0,
+ *   "cancelled":           0,
+ *   "diverted":            0
  * }
  *
  * Formato atteso per un heartbeat (tick fittizio notturno):
  * {
- *   "event_time": "2025-01-15T02:30:00",
- *   "heartbeat":  true,
- *   "airline":           null,
- *   "origin_airport_id": null,
- *   "dest_airport_id":   null,
- *   "crs_dep_time":      null,
- *   "dep_delay":         null,
- *   "cancelled":         0,
- *   "diverted":          0
+ *   "event_time":          "2025-01-15T02:30:00",
+ *   "kafka_produce_time":  1751000060456,
+ *   "heartbeat":           true,
+ *   ...
  * }
  *
  * I messaggi heartbeat vengono deserializzati normalmente: il WatermarkStrategy
@@ -81,6 +77,11 @@ public class FlightEventDeserializer implements DeserializationSchema<FlightEven
         JsonNode hbNode = node.get("heartbeat");
         boolean isHeartbeat = (hbNode != null && !hbNode.isNull() && hbNode.asBoolean(false));
 
+        // ── Kafka produce time (wall-clock ms del producer) ───────────────────
+        // Retrocompatibile: assente o null → 0L (latenza non calcolabile).
+        JsonNode kptNode = node.get("kafka_produce_time");
+        long kafkaProduceTime = (kptNode != null && !kptNode.isNull()) ? kptNode.asLong(0L) : 0L;
+
         // ── Campi volo (null per gli heartbeat per scelta semantica) ──────────
         String  airline         = getTextOrNull(node, "airline");
         Integer originAirportId = getIntOrNull(node, "origin_airport_id");
@@ -97,6 +98,7 @@ public class FlightEventDeserializer implements DeserializationSchema<FlightEven
                 cancelled, diverted
         );
         event.setHeartbeat(isHeartbeat);
+        event.setKafkaProduceTime(kafkaProduceTime);
         return event;
     }
 

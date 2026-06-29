@@ -74,6 +74,22 @@ public class FlightEvent implements Serializable {
      */
     private boolean heartbeat = false;
 
+    /**
+     * Wall-clock (epoch ms, UTC) del momento in cui il Producer ha inviato
+     * questo messaggio a Kafka. Corrisponde a time.time_ns() // 1_000_000
+     * nel producer Python, misurato immediatamente prima della chiamata a
+     * producer.produce().
+     *
+     * Usato per calcolare la latenza end-to-end:
+     *   latency_ms = System.currentTimeMillis() [al momento dell'output Flink]
+     *                - max(kafkaProduceTime)     [tra tutti gli eventi della finestra]
+     *
+     * Il valore 0 indica che il campo non è presente nel messaggio (retrocompatibilità
+     * con messaggi prodotti prima dell'aggiunta di questa metrica): in tal caso
+     * la latenza non viene calcolata per quella finestra.
+     */
+    private long kafkaProduceTime = 0L;
+
     // ─── Costruttori ──────────────────────────────────────────────────────────
 
     /** Costruttore no-arg richiesto da Flink per i POJO. */
@@ -153,6 +169,9 @@ public class FlightEvent implements Serializable {
 
     public boolean getHeartbeat()                               { return heartbeat; }
     public void setHeartbeat(boolean heartbeat)                 { this.heartbeat = heartbeat; }
+
+    public long getKafkaProduceTime()                               { return kafkaProduceTime; }
+    public void setKafkaProduceTime(long kafkaProduceTime)          { this.kafkaProduceTime = kafkaProduceTime; }
 
     @Override
     public String toString() {

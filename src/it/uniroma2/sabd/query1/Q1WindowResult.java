@@ -53,6 +53,27 @@ public class Q1WindowResult {
      */
     public int lateCount;
 
+    /**
+     * Massimo wall-clock (epoch ms) tra i kafkaProduceTime di tutti gli eventi
+     * della finestra. Rappresenta il momento in cui l'ultimo dato necessario
+     * per questa finestra era disponibile nel sistema (prima di Flink).
+     *
+     * Usato per calcolare la latenza end-to-end:
+     *   latency_ms = outputTime - maxKafkaProduceTime
+     * dove outputTime = System.currentTimeMillis() al momento dell'output.
+     *
+     * Valore 0 se nessun evento aveva kafkaProduceTime valorizzato
+     * (retrocompatibilità con messaggi prodotti prima dell'aggiunta del campo).
+     */
+    public long maxKafkaProduceTime;
+
+    /**
+     * Wall-clock (epoch ms) del momento in cui la ProcessWindowFunction
+     * ha emesso questo risultato. Impostato alla fine di process().
+     * Combinato con maxKafkaProduceTime dà la latenza end-to-end.
+     */
+    public long outputTime;
+
     public Q1WindowResult() {}
 
     // ─── Metriche derivate (calcolate alla chiusura della finestra) ───────────
@@ -81,5 +102,30 @@ public class Q1WindowResult {
     public double getLateDepartureRate() {
         int nonCancelled = completed + diverted;
         return nonCancelled > 0 ? (100.0 * lateCount / nonCancelled) : 0.0;
+    }
+
+    /**
+     * Latenza end-to-end in millisecondi.
+     * outputTime - maxKafkaProduceTime: tempo reale tra l'invio dell'ultimo
+     * evento su Kafka e l'emissione del risultato da parte di Flink.
+     * Restituisce -1 se maxKafkaProduceTime non è disponibile (valore 0).
+     */
+    public long getLatencyMs() {
+        return maxKafkaProduceTime > 0 ? outputTime - maxKafkaProduceTime : -1L;
+    }
+
+    /**
+     * Throughput in record per minuto di event time.
+     * numFlights / durata_finestra_in_minuti (60 min per la tumbling 1h di Q1).
+     *
+     * Unità scelta al posto di record/s per evitare valori inferiori a 0.01
+     * nelle finestre notturne a bassa densità di voli, che verrebbero arrotondati
+     * a 0.00 con soli 2 decimali. Con record/min anche il caso peggiore
+     * (1 volo / 60 min = 0.0167) rimane distinguibile da zero.
+     */
+    public double getThroughputRpm() {
+        long durationMs = windowEnd - windowStart;
+        double durationMin = durationMs / 60_000.0;
+        return durationMin > 0 ? numFlights / durationMin : 0.0;
     }
 }

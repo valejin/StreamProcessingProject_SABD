@@ -51,6 +51,9 @@ public class Query1Job {
     private static final String OUTPUT_PATH  =
             System.getenv().getOrDefault("Q1_OUTPUT_PATH", "/results/q1_output.csv");
 
+    private static final String METRICS_PATH =
+            System.getenv().getOrDefault("Q1_METRICS_PATH", "/results/metrics_q1.csv");
+
     // Flag per abilitare/disabilitare il sink InfluxDB senza ricompilare
     private static final boolean INFLUXDB_ENABLED =
             Boolean.parseBoolean(System.getenv().getOrDefault("INFLUXDB_ENABLED", "true"));
@@ -108,6 +111,41 @@ public class Query1Job {
             }
         }).setParallelism(1).name("CSV Sink Q1");
 
+        // ── 5. Sink CSV metriche (latenza e throughput) ───────────────────────
+        //
+        // Una riga per ogni (finestra, airline): una sola misurazione per trigger,
+        // indipendente dal numero di voli. La latenza è calcolata come:
+        //   latency_ms = System.currentTimeMillis() [al momento dell'output]
+        //                - max(kafkaProduceTime)     [tra tutti gli eventi della finestra]
+        // Il throughput è in record per minuto di event time:
+        //   throughput_rpm = num_flights / window_duration_min  (60 min per Q1)
+        // Unità scelta per evitare arrotondamento a 0.00 nelle finestre notturne.
+        try (java.io.PrintWriter pw = new java.io.PrintWriter(
+                new java.io.FileWriter(METRICS_PATH, false))) {
+            pw.println("window_start, window_end, airline, num_flights, latency_ms, throughput_rpm");
+        }
+
+        q1Results.map(Query1Job::formatMetricsRow)
+                .addSink(new org.apache.flink.streaming.api.functions.sink.RichSinkFunction<String>() {
+                    private transient java.io.PrintWriter writer;
+
+                    @Override
+                    public void open(org.apache.flink.configuration.Configuration parameters) throws Exception {
+                        writer = new java.io.PrintWriter(new java.io.FileWriter(METRICS_PATH, true));
+                    }
+
+                    @Override
+                    public void invoke(String value, Context context) {
+                        writer.println(value);
+                        writer.flush();
+                    }
+
+                    @Override
+                    public void close() {
+                        if (writer != null) writer.close();
+                    }
+                }).setParallelism(1).name("Metrics CSV Sink Q1");
+
         // ── 5. Sink InfluxDB (opzionale, abilitato tramite env var) ──────────
         if (INFLUXDB_ENABLED) {
             q1Results
@@ -138,8 +176,17 @@ public class Query1Job {
             result.windowStart = context.window().getStart();
             result.windowEnd   = context.window().getEnd();
 
+            // Nota: gli heartbeat sono già stati esclusi dal .filter() a monte
+            // (airline == null → non passa TARGET_AIRLINES.contains()).
+            // Il loop processa solo voli reali AA/DL/UA/WN.
             for (FlightEvent e : events) {
                 result.numFlights++;
+
+                // Traccia il massimo kafkaProduceTime tra tutti gli eventi della finestra:
+                // rappresenta il momento in cui l'ultimo dato era disponibile in Kafka.
+                if (e.getKafkaProduceTime() > result.maxKafkaProduceTime) {
+                    result.maxKafkaProduceTime = e.getKafkaProduceTime();
+                }
 
                 if (e.isCancelled()) {
                     result.cancelled++;
@@ -160,6 +207,9 @@ public class Query1Job {
                 }
             }
 
+            // Imposta il wall-clock di output immediatamente prima di emettere:
+            // latency_ms = outputTime - maxKafkaProduceTime
+            result.outputTime = System.currentTimeMillis();
             out.collect(result);
         }
     }
@@ -178,6 +228,24 @@ public class Query1Job {
                 CsvOutputFormatter.formatDouble(r.getDepDelayMean()),
                 CsvOutputFormatter.formatPercent(r.getCancellationRate()),
                 CsvOutputFormatter.formatPercent(r.getLateDepartureRate())
+        );
+    }
+
+    /**
+     * Formatta una riga per il CSV delle metriche di Q1.
+     * Una riga per (finestra, airline): non dipende dal numero di voli nel risultato.
+     *
+     * latency_ms   = -1 se kafkaProduceTime non disponibile (retrocompatibilità).
+     * throughput_rpm usa 4 decimali: anche 1 volo / 60 min = 0.0167, distinguibile da 0.
+     */
+    private static String formatMetricsRow(Q1WindowResult r) {
+        return String.join(", ",
+                CsvOutputFormatter.formatTimestamp(r.windowStart),
+                CsvOutputFormatter.formatTimestamp(r.windowEnd),
+                r.airline,
+                String.valueOf(r.numFlights),
+                String.valueOf(r.getLatencyMs()),
+                String.format("%.4f", r.getThroughputRpm())
         );
     }
 }

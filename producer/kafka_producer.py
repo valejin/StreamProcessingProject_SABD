@@ -50,7 +50,7 @@ DATASET_DIR = os.getenv("DATASET_DIR",
 #   3600   → 1 ora di event time = 1 s reale  (tutto il dataset ~120 s reali)
 #   360    → 1 ora di event time = 10 s reale (debug: finestre leggibili)
 #   86400  → 1 giorno di event time = 1 s reale (benchmark veloce)
-TIME_SCALE_FACTOR = int(os.getenv("TIME_SCALE_FACTOR", "360000"))
+TIME_SCALE_FACTOR = int(os.getenv("TIME_SCALE_FACTOR", "3600"))
 
 # Dimensione del batch di invio a Kafka (numero di messaggi per flush parziale)
 BATCH_LOG_INTERVAL = 50_000
@@ -213,6 +213,10 @@ def build_message(row: dict) -> bytes:
     """
     Costruisce il messaggio JSON da inviare a Kafka per un volo reale.
     Il campo "heartbeat" è assente (o False) per i voli normali.
+
+    Il campo "kafka_produce_time" è il wall-clock (epoch ms UTC) misurato
+    immediatamente prima dell'invio: viene usato da Flink per calcolare la
+    latenza end-to-end (output_time - kafka_produce_time).
     """
     def to_python(val):
         if pd.isna(val):
@@ -225,6 +229,7 @@ def build_message(row: dict) -> bytes:
         "event_time": datetime.utcfromtimestamp(
             row["event_time_ms"] / 1000
         ).strftime("%Y-%m-%dT%H:%M:%S"),
+        "kafka_produce_time": int(time.time() * 1000),   # wall-clock ms UTC
         "airline":          to_python(row["OP_UNIQUE_CARRIER"]),
         "origin_airport_id": to_python(row["ORIGIN_AIRPORT_ID"]),
         "dest_airport_id":  to_python(row["DEST_AIRPORT_ID"]),
@@ -248,11 +253,16 @@ def build_heartbeat_message(event_time_ms: int) -> bytes:
 
     Tutti gli altri campi sono null per chiarezza semantica e per garantire che
     un eventuale bug nel filtro non produca conteggi errati nelle statistiche.
+
+    Il campo "kafka_produce_time" è presente anche per gli heartbeat: sebbene
+    non vengano usati nelle aggregazioni, il campo viene comunque impostato per
+    uniformità e per evitare eccezioni nel deserializer.
     """
     record = {
         "event_time": datetime.utcfromtimestamp(
             event_time_ms / 1000
         ).strftime("%Y-%m-%dT%H:%M:%S"),
+        "kafka_produce_time": int(time.time() * 1000),   # wall-clock ms UTC
         "heartbeat": True,
         "airline":           None,
         "origin_airport_id": None,

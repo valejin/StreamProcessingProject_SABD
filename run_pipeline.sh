@@ -1,190 +1,346 @@
 #!/usr/bin/env bash
 # =============================================================================
 # run_pipeline.sh — Avvia l'intero stack Stream Processing SABD
+#
 # Uso:
-#   bash run_pipeline.sh q1       → reset InfluxDB, build, deploy, lancia solo Q1 + producer
-#   bash run_pipeline.sh q2       → reset InfluxDB, build, deploy, lancia solo Q2 + producer
-#   bash run_pipeline.sh all      → reset InfluxDB, build, deploy, lancia Q1 + Q2 + producer
+#   bash run_pipeline.sh q1    → lancia solo Query1Job + metriche
+#   bash run_pipeline.sh q2    → lancia solo Query2Job + metriche
+#   bash run_pipeline.sh all   → lancia Q1 + Q2 + metriche
+#
+# Fasi eseguite automaticamente:
+#   1. Reset InfluxDB (stop/rm container + volume)
+#   2. Build Maven (mvn clean package -DskipTests)
+#   3. Upload JAR nel container Flink
+#   4. Submit job Flink in modalità detached (-d)
+#   5. Attesa che il job sia RUNNING (polling REST, max 60s)
+#   6. Avvio poll_flink_throughput.sh in background
+#   7. Lancio kafka_producer.py
+#   8. Attesa 60s dopo fine producer → cancellazione job Flink
+#   9. Stop polling REST
+#  10. Esecuzione compare_metrics.py (confronto canali)
 # =============================================================================
 
 set -euo pipefail
 
-# ── Parametro query ──────────────────────────────────────────────────────────
-QUERY="${1:-}"   # q1 | q2 | all
+# ── Colori ────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GRN='\033[0;32m'; YLW='\033[1;33m'
+BLU='\033[0;34m'; CYN='\033[0;36m'; RST='\033[0m'
 
-usage() {
-  echo -e "Uso: bash run_pipeline.sh <query>"
-  echo -e "  query: q1 | q2 | all"
-  exit 1
-}
+log()  { echo -e "${BLU}[$(date +%H:%M:%S)]${RST} $*"; }
+ok()   { echo -e "${GRN}[$(date +%H:%M:%S)] ✓ $*${RST}"; }
+warn() { echo -e "${YLW}[$(date +%H:%M:%S)] ⚠ $*${RST}"; }
+die()  { echo -e "${RED}[$(date +%H:%M:%S)] ✗ ERRORE: $*${RST}" >&2; exit 1; }
+sep()  { echo -e "${CYN}$(printf '─%.0s' {1..72})${RST}"; }
 
-case "$QUERY" in
-  q1|q2|all) ;;   # valori accettati
-  *) usage ;;
-esac
+# ── Configurazione ────────────────────────────────────────────────────────────
+QUERY="${1:-}"
+[[ "$QUERY" =~ ^(q1|q2|all)$ ]] \
+    || { echo "Uso: bash run_pipeline.sh [q1|q2|all]"; exit 1; }
 
-# ── Colori ──────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
-
-log()  { echo -e "${CYAN}[$(date '+%H:%M:%S')]${NC} $*"; }
-ok()   { echo -e "${GREEN}[$(date '+%H:%M:%S')] ✔ $*${NC}"; }
-warn() { echo -e "${YELLOW}[$(date '+%H:%M:%S')] ⚠ $*${NC}"; }
-die()  { echo -e "${RED}[$(date '+%H:%M:%S')] ✘ ERRORE: $*${NC}" >&2; exit 1; }
-
-# ── Percorsi ─────────────────────────────────────────────────────────────────
-PROJECT_ROOT="/mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD"
-DOCKER_DIR="${PROJECT_ROOT}/docker"
-JAR_NAME="SreamProcessingProject_SABD-1.0-SNAPSHOT.jar"
-JAR_LOCAL="${PROJECT_ROOT}/target/${JAR_NAME}"
-JAR_REMOTE="/opt/flink/jobs/${JAR_NAME}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+DOCKER_DIR="$PROJECT_ROOT/docker"
+PRODUCER_SCRIPT="$PROJECT_ROOT/producer/kafka_producer.py"
+POLL_SCRIPT="$PROJECT_ROOT/poll_flink_throughput.sh"
+COMPARE_SCRIPT="$PROJECT_ROOT/compare_metrics.py"
 
 FLINK_CONTAINER="flink-jobmanager"
-KAFKA_BROKER="kafka:29092"
+JAR_LOCAL="$PROJECT_ROOT/target/SreamProcessingProject_SABD-1.0-SNAPSHOT.jar"
+JAR_REMOTE="/opt/flink/usrlib/SreamProcessingProject_SABD-1.0-SNAPSHOT.jar"
 
-Q1_CLASS="it.uniroma2.sabd.query1.Query1Job"
-Q2_CLASS="it.uniroma2.sabd.query2.Query2Job"
+KAFKA_BROKER="${KAFKA_BROKER:-kafka:29092}"
+FLINK_URL="${FLINK_URL:-http://localhost:8081}"
+RESULTS_DIR="${RESULTS_DIR:-$PROJECT_ROOT/Results}"
 
-FLINK_WAIT_SECONDS=15
-FLINK_SHUTDOWN_WAIT=60   # secondi di attesa dopo il producer prima di cancellare i job
+CLASS_Q1="it.uniroma2.sabd.query1.Query1Job"
+CLASS_Q2="it.uniroma2.sabd.query2.Query2Job"
 
-# Array per raccogliere i JobID lanciati in questa sessione
+# Tempi di attesa
+FLINK_JOB_READY_TIMEOUT=60   # secondi max per attendere che il job sia RUNNING
+FLINK_JOB_READY_POLL=3       # intervallo polling stato job (secondi)
+POLL_INTERVAL=5               # intervallo campionamento metriche REST (secondi)
+SHUTDOWN_WAIT=60              # secondi dopo producer → cancellazione job
+
+# Array dei JobID lanciati in questa sessione
 FLINK_JOB_IDS=()
 
-# ── Controlli prerequisiti ───────────────────────────────────────────────────
-echo -e "\n${BOLD}════════════════════════════════════════════════════${NC}"
-echo -e "${BOLD}   SABD Stream Processing — avvio pipeline [${QUERY^^}]  ${NC}"
-echo -e "${BOLD}════════════════════════════════════════════════════${NC}\n"
+# PID del processo di polling in background
+POLL_PID=""
 
-command -v docker  >/dev/null 2>&1 || die "docker non trovato nel PATH"
-command -v mvn     >/dev/null 2>&1 || die "mvn non trovato nel PATH"
-command -v python3 >/dev/null 2>&1 || die "python3 non trovato nel PATH"
+# ── Funzioni utilità ──────────────────────────────────────────────────────────
 
-[[ -d "$DOCKER_DIR" ]]   || die "Directory docker non trovata: $DOCKER_DIR"
-[[ -f "$PROJECT_ROOT/pom.xml" ]] || die "pom.xml non trovato in: $PROJECT_ROOT"
-
-# ── Step 1: Reset InfluxDB ───────────────────────────────────────────────────
-echo -e "\n${BOLD}[1/5] Reset InfluxDB${NC}"
-log "Fermando il container influxdb..."
-docker compose -f "${DOCKER_DIR}/docker-compose.yml" stop influxdb
-
-log "Rimuovendo il container influxdb..."
-docker compose -f "${DOCKER_DIR}/docker-compose.yml" rm -f influxdb
-
-log "Eliminando il volume docker_influxdb-data..."
-docker volume rm docker_influxdb-data 2>/dev/null \
-  && ok "Volume rimosso." \
-  || warn "Volume non trovato (già assente — OK)."
-
-log "Ricreando il container influxdb..."
-docker compose -f "${DOCKER_DIR}/docker-compose.yml" up -d influxdb
-ok "InfluxDB riavviato."
-
-# ── Step 2: Build Maven ──────────────────────────────────────────────────────
-echo -e "\n${BOLD}[2/5] Build Maven${NC}"
-log "Esecuzione di: mvn clean package -DskipTests"
-cd "$PROJECT_ROOT"
-mvn clean package -DskipTests
-ok "Build completata → ${JAR_LOCAL}"
-
-[[ -f "$JAR_LOCAL" ]] || die "JAR non trovato dopo la build: ${JAR_LOCAL}"
-
-# ── Step 3: Copia JAR nel container Flink ───────────────────────────────────
-echo -e "\n${BOLD}[3/5] Deploy JAR nel container Flink${NC}"
-log "Copio il JAR in ${FLINK_CONTAINER}:${JAR_REMOTE} ..."
-
-docker exec "$FLINK_CONTAINER" mkdir -p /opt/flink/jobs
-
-docker cp "${JAR_LOCAL}" "${FLINK_CONTAINER}:${JAR_REMOTE}" \
-  || die "docker cp fallito. Il container '${FLINK_CONTAINER}' è in esecuzione?"
-ok "JAR copiato correttamente."
-
-# ── Step 4: Lancio job Flink ─────────────────────────────────────────────────
-echo -e "\n${BOLD}[4/5] Lancio job Flink (${QUERY^^})${NC}"
-
+# Sottomette un job Flink in modalità detached e cattura il JobID
 run_flink_job() {
-  local label="$1"
-  local class="$2"
-  log "Submitting ${label}..."
+    local label="$1"
+    local class="$2"
+    log "Submitting ${label}..."
+    local output
+    output=$(docker exec \
+        -e KAFKA_BROKER="${KAFKA_BROKER}" \
+        -e INFLUXDB_ENABLED="true" \
+        "${FLINK_CONTAINER}" \
+        flink run -d \
+            -c "${class}" \
+            "${JAR_REMOTE}" 2>&1) \
+        || die "Submit ${label} fallito:\n$output"
 
-  # Cattura l'output di flink run -d per estrarre il JobID
-  local output
-  output=$(docker exec \
-    -e KAFKA_BROKER="${KAFKA_BROKER}" \
-    "${FLINK_CONTAINER}" \
-    flink run -d \
-      -c "${class}" \
-      "${JAR_REMOTE}" 2>&1) || die "Lancio ${label} fallito."
-
-  echo "$output"
-
-  # Estrai il JobID dalla riga "Job has been submitted with JobID <id>"
-  local job_id
-  job_id=$(echo "$output" | grep -oP '(?<=JobID )[a-f0-9]+' || true)
-
-  if [[ -n "$job_id" ]]; then
-    FLINK_JOB_IDS+=("$job_id")
-    ok "${label} inviato a Flink — JobID: ${job_id}"
-  else
-    warn "${label} inviato, ma JobID non estratto dall'output."
-  fi
+    local job_id
+    job_id=$(echo "$output" | grep -oP '(?<=JobID )[a-f0-9]+' || true)
+    if [[ -z "$job_id" ]]; then
+        warn "JobID non estratto dall'output. Output completo:"
+        echo "$output"
+    else
+        FLINK_JOB_IDS+=("$job_id")
+        ok "${label} inviato — JobID: ${job_id}"
+    fi
 }
 
-case "$QUERY" in
-  q1)
-    run_flink_job "Query1Job" "${Q1_CLASS}"
-    ;;
-  q2)
-    run_flink_job "Query2Job" "${Q2_CLASS}"
-    ;;
-  all)
-    run_flink_job "Query1Job" "${Q1_CLASS}"
-    run_flink_job "Query2Job" "${Q2_CLASS}"
-    ;;
-esac
+# Attende che un job specifico sia in stato RUNNING (polling REST)
+wait_for_job_running() {
+    local job_id="$1"
+    local label="$2"
+    local elapsed=0
 
-# ── Step 5: Attesa inizializzazione + producer ───────────────────────────────
-echo -e "\n${BOLD}[5/5] Attesa inizializzazione Flink (${FLINK_WAIT_SECONDS}s) + avvio producer${NC}"
-log "Aspetto ${FLINK_WAIT_SECONDS} secondi che JobManager e TaskManager siano pronti..."
+    log "Attendo che ${label} (${job_id:0:8}...) sia RUNNING..."
+    while [[ $elapsed -lt $FLINK_JOB_READY_TIMEOUT ]]; do
+        local state
+        state=$(curl -sf "$FLINK_URL/jobs/$job_id" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('state','UNKNOWN'))" \
+            2>/dev/null) || state="UNKNOWN"
 
-for i in $(seq "$FLINK_WAIT_SECONDS" -1 1); do
-  printf "\r  ${YELLOW}%2ds rimanenti...${NC}" "$i"
-  sleep 1
-done
-echo ""
-ok "Attesa completata."
+        if [[ "$state" == "RUNNING" ]]; then
+            ok "${label} è RUNNING dopo ${elapsed}s."
+            return 0
+        elif [[ "$state" == "FAILED" || "$state" == "CANCELED" ]]; then
+            die "${label} è passato in stato ${state} — controlla i log Flink."
+        fi
 
-log "Avvio kafka_producer.py ..."
+        sleep "$FLINK_JOB_READY_POLL"
+        elapsed=$(( elapsed + FLINK_JOB_READY_POLL ))
+        log "  ... stato: ${state} (${elapsed}s / ${FLINK_JOB_READY_TIMEOUT}s)"
+    done
+
+    warn "Timeout: ${label} non è ancora RUNNING dopo ${FLINK_JOB_READY_TIMEOUT}s. Procedo comunque."
+}
+
+# Avvia il polling REST in background per una query specifica
+start_polling() {
+    local query="$1"
+    if [[ ! -f "$POLL_SCRIPT" ]]; then
+        warn "poll_flink_throughput.sh non trovato in $POLL_SCRIPT — polling saltato."
+        return
+    fi
+
+    log "Avvio polling metriche REST (ogni ${POLL_INTERVAL}s) in background..."
+    FLINK_URL="$FLINK_URL" \
+    OUTPUT_DIR="$RESULTS_DIR" \
+    bash "$POLL_SCRIPT" "$query" "$POLL_INTERVAL" &
+    POLL_PID=$!
+    ok "Polling avviato (PID: ${POLL_PID})"
+}
+
+# Ferma il polling REST se ancora attivo
+stop_polling() {
+    if [[ -n "$POLL_PID" ]] && kill -0 "$POLL_PID" 2>/dev/null; then
+        log "Fermo polling REST (PID: ${POLL_PID})..."
+        kill "$POLL_PID" 2>/dev/null || true
+        wait "$POLL_PID" 2>/dev/null || true
+        ok "Polling fermato."
+    fi
+}
+
+# Cancella tutti i job Flink raccolti in FLINK_JOB_IDS
+cancel_flink_jobs() {
+    if [[ ${#FLINK_JOB_IDS[@]} -eq 0 ]]; then
+        warn "Nessun JobID da cancellare."
+        return
+    fi
+    log "Cancellazione job Flink..."
+    for jid in "${FLINK_JOB_IDS[@]}"; do
+        log "  Cancello job ${jid:0:8}..."
+        docker exec "${FLINK_CONTAINER}" flink cancel "$jid" 2>/dev/null \
+            && ok "  Job ${jid:0:8} cancellato." \
+            || warn "  Job ${jid:0:8} già terminato o non trovato (normale)."
+    done
+}
+
+# Trap: cleanup in caso di Ctrl+C o errore
+cleanup() {
+    echo ""
+    warn "Interruzione rilevata — cleanup in corso..."
+    stop_polling
+    cancel_flink_jobs
+    exit 1
+}
+trap cleanup INT TERM
+
+# =============================================================================
+# INIZIO PIPELINE
+# =============================================================================
+
+sep
+echo -e "${CYN}  SABD Project 2 — Stream Processing Pipeline  [${QUERY^^}]${RST}"
+sep
+
+# ── STEP 1: Reset InfluxDB ────────────────────────────────────────────────────
+sep
+log "[1/9] Reset InfluxDB..."
+
+cd "$DOCKER_DIR"
+docker compose stop influxdb 2>/dev/null || true
+docker compose rm -f influxdb 2>/dev/null || true
+docker volume rm docker_influxdb-data 2>/dev/null \
+    || warn "Volume docker_influxdb-data non trovato (prima esecuzione?)."
+docker compose up -d influxdb
+ok "InfluxDB ricreato."
+
+# ── STEP 2: Build Maven ───────────────────────────────────────────────────────
+sep
+log "[2/9] Build Maven..."
 cd "$PROJECT_ROOT"
-python3 producer/kafka_producer.py
-ok "Producer terminato."
+mvn clean package -DskipTests -q \
+    || die "Build Maven fallita."
+[[ -f "$JAR_LOCAL" ]] || die "JAR non trovato: $JAR_LOCAL"
+ok "Build completata → $(basename "$JAR_LOCAL")"
 
-# ── Step 6: Attesa finale + shutdown job Flink ───────────────────────────────
-echo -e "\n${BOLD}[6/6] Shutdown job Flink (attesa ${FLINK_SHUTDOWN_WAIT}s)${NC}"
-log "Producer completato. Aspetto ${FLINK_SHUTDOWN_WAIT}s prima di cancellare i job..."
+# ── STEP 3: Upload JAR nel container Flink ────────────────────────────────────
+sep
+log "[3/9] Upload JAR nel container Flink..."
 
-for i in $(seq "$FLINK_SHUTDOWN_WAIT" -1 1); do
-  printf "\r  ${YELLOW}%2ds rimanenti...${NC}" "$i"
-  sleep 1
-done
-echo ""
+# Crea la directory usrlib se non esiste
+docker exec "${FLINK_CONTAINER}" mkdir -p /opt/flink/usrlib
 
-if [[ ${#FLINK_JOB_IDS[@]} -eq 0 ]]; then
-  warn "Nessun JobID registrato — cancellazione saltata."
+# Usa REST upload (più affidabile di docker cp da WSL2 su /mnt/c/)
+JAR_UPLOAD_ID=$(curl -sf \
+    -X POST \
+    -H "Expect:" \
+    -F "jarfile=@${JAR_LOCAL}" \
+    "$FLINK_URL/jars/upload" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('filename',''))" \
+    2>/dev/null) || JAR_UPLOAD_ID=""
+
+if [[ -n "$JAR_UPLOAD_ID" ]]; then
+    ok "JAR caricato via REST: $JAR_UPLOAD_ID"
+    # Aggiorna JAR_REMOTE con il path restituito dalla REST API
+    JAR_REMOTE="$JAR_UPLOAD_ID"
 else
-  for job_id in "${FLINK_JOB_IDS[@]}"; do
-    log "Cancello job ${job_id}..."
-    docker exec "${FLINK_CONTAINER}" flink cancel "${job_id}" 2>&1 \
-      && ok "Job ${job_id} cancellato." \
-      || warn "Job ${job_id} già terminato o non trovato — OK."
-  done
+    # Fallback: docker cp (funziona se il path locale non è su /mnt/c/)
+    warn "Upload REST fallito — provo con docker cp..."
+    docker cp "$JAR_LOCAL" "${FLINK_CONTAINER}:${JAR_REMOTE}" \
+        || die "docker cp fallito. Carica il JAR manualmente via Web UI ($FLINK_URL)."
+    ok "JAR copiato via docker cp."
 fi
 
-# ── Fine ─────────────────────────────────────────────────────────────────────
-echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}   Pipeline completata con successo!                ${NC}"
-echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════${NC}\n"
+# ── STEP 4: Submit job/i Flink ────────────────────────────────────────────────
+sep
+log "[4/9] Submit job Flink (modalità detached)..."
+
+case "$QUERY" in
+    q1)  run_flink_job "Query1Job" "$CLASS_Q1" ;;
+    q2)  run_flink_job "Query2Job" "$CLASS_Q2" ;;
+    all) run_flink_job "Query1Job" "$CLASS_Q1"
+         run_flink_job "Query2Job" "$CLASS_Q2" ;;
+esac
+
+# ── STEP 5: Attesa job RUNNING (polling REST) ─────────────────────────────────
+sep
+log "[5/9] Attesa che i job siano RUNNING..."
+
+# Piccola pausa iniziale per dare tempo a Flink di registrare il job
+sleep 4
+
+for i in "${!FLINK_JOB_IDS[@]}"; do
+    label="Job $((i+1)) (${FLINK_JOB_IDS[$i]:0:8}...)"
+    wait_for_job_running "${FLINK_JOB_IDS[$i]}" "$label"
+done
+
+# ── STEP 6: Avvio polling metriche REST in background ─────────────────────────
+sep
+log "[6/9] Avvio polling metriche interne Flink..."
+
+# Determina quale query passare al poller
+# (se all, usa q1 come riferimento — Q2 ha vertex ID diversi, gestito separatamente)
+POLL_QUERY="$QUERY"
+[[ "$QUERY" == "all" ]] && POLL_QUERY="q1"
+
+start_polling "$POLL_QUERY"
+
+# Breve pausa per dare al poller il tempo di fare il primo campione
+sleep 2
+
+# ── STEP 7: Lancio Kafka producer ─────────────────────────────────────────────
+sep
+log "[7/9] Lancio Kafka producer..."
+[[ -f "$PRODUCER_SCRIPT" ]] || die "Producer non trovato: $PRODUCER_SCRIPT"
+
+python3 "$PRODUCER_SCRIPT"
+ok "Producer completato — tutti gli eventi inviati su Kafka."
+
+# ── STEP 8: Attesa + cancellazione job ────────────────────────────────────────
+sep
+log "[8/9] Producer terminato. Attendo ${SHUTDOWN_WAIT}s prima di cancellare i job..."
+log "      (il tempo consente alle ultime finestre di essere processate)"
+
+# Countdown visuale ogni 10 secondi
+for remaining in $(seq $SHUTDOWN_WAIT -10 10); do
+    sleep 10
+    log "  ... ${remaining}s rimanenti prima della cancellazione"
+done
+sleep $(( SHUTDOWN_WAIT % 10 ))   # resto eventuale
+
+# Ferma il polling REST prima di cancellare i job
+stop_polling
+
+# Cancella i job
+cancel_flink_jobs
+
+# ── STEP 9: Confronto metriche (canale interno vs esterno) ───────────────────
+sep
+log "[9/9] Confronto metriche (canale interno Flink vs canale esterno)..."
+
+if [[ ! -f "$COMPARE_SCRIPT" ]]; then
+    warn "compare_metrics.py non trovato in $COMPARE_SCRIPT — confronto saltato."
+else
+    # Determina i path dei CSV in base alla query
+    case "$POLL_QUERY" in
+        q1)
+            EXT_CSV="$RESULTS_DIR/metrics_q1.csv"
+            INT_CSV="$RESULTS_DIR/metrics_flink_internal_q1.csv"
+            ;;
+        q2)
+            EXT_CSV="$RESULTS_DIR/metrics_q2.csv"
+            INT_CSV="$RESULTS_DIR/metrics_flink_internal_q2.csv"
+            ;;
+        *)
+            EXT_CSV="$RESULTS_DIR/metrics_q1.csv"
+            INT_CSV="$RESULTS_DIR/metrics_flink_internal_q1.csv"
+            ;;
+    esac
+
+    # Attende un momento che i file CSV siano stati flushati su disco
+    sleep 3
+
+    if [[ -f "$EXT_CSV" && -f "$INT_CSV" ]]; then
+        python3 "$COMPARE_SCRIPT" \
+            --ext "$EXT_CSV" \
+            --int "$INT_CSV" \
+            --out "$RESULTS_DIR" \
+            && ok "Confronto completato → $RESULTS_DIR/metrics_comparison_${POLL_QUERY}.csv"
+    elif [[ ! -f "$EXT_CSV" ]]; then
+        warn "CSV esterno non trovato: $EXT_CSV"
+        warn "Assicurati che Q${POLL_QUERY: -1}_METRICS_PATH punti a $EXT_CSV"
+    elif [[ ! -f "$INT_CSV" ]]; then
+        warn "CSV interno non trovato: $INT_CSV"
+        warn "Il polling potrebbe non aver avuto campioni (job troppo breve?)."
+    fi
+fi
+
+# ── Fine ──────────────────────────────────────────────────────────────────────
+sep
+ok "Pipeline [${QUERY^^}] completata."
+sep
+echo ""
+echo "  Output disponibili in $RESULTS_DIR:"
+ls -lh "$RESULTS_DIR"/*.csv "$RESULTS_DIR"/*.txt 2>/dev/null \
+    | awk '{print "    " $NF "  (" $5 ")"}' || true
+echo ""
