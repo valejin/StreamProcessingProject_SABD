@@ -50,7 +50,7 @@ DATASET_DIR = os.getenv("DATASET_DIR",
 #   3600   → 1 ora di event time = 1 s reale  (tutto il dataset ~120 s reali)
 #   360    → 1 ora di event time = 10 s reale (debug: finestre leggibili)
 #   86400  → 1 giorno di event time = 1 s reale (benchmark veloce)
-TIME_SCALE_FACTOR = int(os.getenv("TIME_SCALE_FACTOR", "3600"))
+TIME_SCALE_FACTOR = int(os.getenv("TIME_SCALE_FACTOR", "86400"))
 
 # Dimensione del batch di invio a Kafka (numero di messaggi per flush parziale)
 BATCH_LOG_INTERVAL = 50_000

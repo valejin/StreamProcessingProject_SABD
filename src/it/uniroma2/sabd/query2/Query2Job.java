@@ -85,6 +85,9 @@ public class Query2Job {
     private static final boolean INFLUXDB_ENABLED =
             Boolean.parseBoolean(System.getenv().getOrDefault("INFLUXDB_ENABLED", "true"));
 
+    private static final String METRICS_PATH =
+            System.getenv().getOrDefault("Q2_METRICS_PATH", "/results/metrics_q2.csv");
+
     private static final int MIN_FLIGHTS = 30;
 
     // Header CSV per le sliding window: ts = inizio della finestra temporale
@@ -186,8 +189,71 @@ public class Query2Job {
                     .name("InfluxDB Sink Q2 Global");
         }
 
+        // ── 9. Sink CSV metriche (latenza e throughput) ───────────────────────
+        //
+        // Una riga per trigger per ciascuna delle tre finestre.
+        // Le metriche vengono estratte dai Q2RankedEntry: il primo elemento
+        // emesso per ogni trigger porta i valori di latenza e throughput
+        // calcolati nella ProcessWindowFunction (tutti gli elementi dello stesso
+        // trigger hanno gli stessi valori di metrica).
+        try (java.io.PrintWriter pw = new java.io.PrintWriter(
+                new java.io.FileWriter(METRICS_PATH, false))) {
+            pw.println("window_type, window_start, trigger_ts, num_flights, latency_ms, throughput_rps");
+        }
+
+        // Deduplica per trigger: emetti solo la riga con rank=1 (il primo del top-10)
+        // per evitare 10 righe identiche per ogni trigger.
+        DataStream<String> metricsRows1h = ranked1h
+                .filter(r -> r.rank == 1)
+                .map(r -> formatMetricsRow(r, "1h"));
+        DataStream<String> metricsRows6h = ranked6h
+                .filter(r -> r.rank == 1)
+                .map(r -> formatMetricsRow(r, "6h"));
+        DataStream<String> metricsRowsGlobal = rankedGlobal
+                .filter(r -> r.rank == 1)
+                .map(r -> formatMetricsRow(r, "global"));
+
+        metricsRows1h.union(metricsRows6h, metricsRowsGlobal)
+                .addSink(new org.apache.flink.streaming.api.functions.sink.RichSinkFunction<String>() {
+                    private transient java.io.PrintWriter writer;
+
+                    @Override
+                    public void open(org.apache.flink.configuration.Configuration parameters) throws Exception {
+                        writer = new java.io.PrintWriter(new java.io.FileWriter(METRICS_PATH, true));
+                    }
+
+                    @Override
+                    public void invoke(String value, Context context) {
+                        writer.println(value);
+                        writer.flush();
+                    }
+
+                    @Override
+                    public void close() {
+                        if (writer != null) writer.close();
+                    }
+                }).setParallelism(1).name("Metrics CSV Sink Q2");
+
         // ── 9. Esecuzione ─────────────────────────────────────────────────────
         env.execute("SABD Project 2 – Query 2");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // POJO per le metriche di Q2 (una riga per trigger, non per ranking entry)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Contiene le metriche di latenza e throughput per un singolo trigger di Q2.
+     * Viene emesso una volta per finestra, indipendentemente dal numero di
+     * aeroporti nel top-10.
+     */
+    public static class Q2MetricsEntry implements java.io.Serializable {
+        public String windowType;    // "1h", "6h", "global"
+        public long   windowStart;   // epoch ms inizio finestra (o DATASET_START per global)
+        public long   triggerTs;     // epoch ms del trigger (ora virtuale corrente)
+        public int    numFlights;    // record elaborati nella finestra
+        public long   latencyMs;     // outputTime - maxKafkaProduceTime (-1 se n/d)
+        public double throughputRps; // numFlights / durata_finestra_s (10 decimali per evitare azzeramento)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -208,12 +274,17 @@ public class Query2Job {
 
             Map<Integer, Q2AirportStats> airportMap = new HashMap<>();
             long windowStart = context.window().getStart();
+            long windowEnd   = context.window().getEnd();
+            long maxKafkaProduceTime = 0L;
+            int  totalFlights = 0;
 
             for (FlightEvent e : elements) {
-                // Doppio controllo difensivo: gli heartbeat non dovrebbero arrivare
-                // qui (già filtrati nel pre-filtro), ma se lo facessero avrebbero
-                // originAirportId=null e verrebbero ignorati dal computeIfAbsent.
                 if (e.isHeartbeat() || e.getOriginAirportId() == null) continue;
+
+                totalFlights++;
+                if (e.getKafkaProduceTime() > maxKafkaProduceTime) {
+                    maxKafkaProduceTime = e.getKafkaProduceTime();
+                }
 
                 Q2AirportStats stats = airportMap.computeIfAbsent(
                         e.getOriginAirportId(),
@@ -222,7 +293,8 @@ public class Query2Job {
                 stats.addFlight(e.getAirline(), e.getDestAirportId(), e.getDepDelay());
             }
 
-            emitTopK(airportMap, windowStart, out);
+            long outputTime = System.currentTimeMillis();
+            emitTopK(airportMap, windowStart, windowEnd, maxKafkaProduceTime, outputTime, totalFlights, out);
         }
     }
 
@@ -246,7 +318,6 @@ public class Query2Job {
     public static class Q2GlobalRankingFunction
             extends ProcessAllWindowFunction<FlightEvent, Q2RankedEntry, GlobalWindow> {
 
-        // Epoch ms di 2025-01-01 00:00:00 UTC — inizio fisso della GlobalWindow
         private static final long DATASET_START_MS =
                 java.time.Instant.parse("2025-01-01T00:00:00Z").toEpochMilli();
 
@@ -257,15 +328,18 @@ public class Query2Job {
 
             Map<Integer, Q2AirportStats> airportMap = new HashMap<>();
             long maxEventTime = Long.MIN_VALUE;
+            long maxKafkaProduceTime = 0L;
+            int  totalFlights = 0;
 
             for (FlightEvent e : elements) {
-                // Gli heartbeat non arrivano qui (filtrati nel pre-filtro),
-                // ma il controllo difensivo garantisce correttezza anche in
-                // configurazioni inusuali (es. filtro rimosso per debug).
                 if (e.isHeartbeat() || e.getOriginAirportId() == null) continue;
 
+                totalFlights++;
                 if (e.getEventTime() > maxEventTime) {
                     maxEventTime = e.getEventTime();
+                }
+                if (e.getKafkaProduceTime() > maxKafkaProduceTime) {
+                    maxKafkaProduceTime = e.getKafkaProduceTime();
                 }
 
                 Q2AirportStats stats = airportMap.computeIfAbsent(
@@ -275,17 +349,12 @@ public class Query2Job {
                 stats.addFlight(e.getAirline(), e.getDestAirportId(), e.getDepDelay());
             }
 
-            // influxTs: usato da InfluxDB per distinguere snapshot consecutivi.
-            // Ricavato come floor(maxEventTime / 60min) * 60min — corrisponde
-            // all'inizio dell'ora virtuale del trigger (07:00, 08:00, ...) ed è
-            // strettamente crescente, necessario per la corretta visualizzazione
-            // in Grafana.
-            // ProcessAllWindowFunction.Context non espone currentWatermark(),
-            // quindi tracciamo il massimo event time manualmente.
             final long INTERVAL_MS = 60 * 60 * 1000L;
             long influxTs = (maxEventTime != Long.MIN_VALUE)
                     ? (maxEventTime / INTERVAL_MS) * INTERVAL_MS
                     : DATASET_START_MS;
+
+            long outputTime = System.currentTimeMillis();
 
             List<Q2AirportStats> statsList = new ArrayList<>(airportMap.values());
             statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS || s.severeDelays == 0);
@@ -296,16 +365,15 @@ public class Query2Job {
             int limit = Math.min(10, statsList.size());
             for (int i = 0; i < limit; i++) {
                 Q2AirportStats s = statsList.get(i);
-                // windowStart = DATASET_START_MS: ts nel CSV è sempre l'inizio
-                // della GlobalWindow (2025-01-01 00:00:00), semanticamente corretto.
-                // influxTs = ora virtuale del trigger: distinto per ogni scatto,
-                // evita collisioni in InfluxDB.
                 Q2RankedEntry entry = new Q2RankedEntry(
                         DATASET_START_MS, i + 1, s.originAirportId,
                         s.numFlights, s.severeDelays,
                         s.getDepDelayMean(), s.getDepDelayMaxSafe(),
                         s.getTopDelayedFlights());
-                entry.influxTs = influxTs;
+                entry.influxTs              = influxTs;
+                entry.maxKafkaProduceTime   = maxKafkaProduceTime;
+                entry.outputTime            = outputTime;
+                entry.totalFlightsInWindow  = totalFlights;
                 out.collect(entry);
             }
         }
@@ -317,6 +385,10 @@ public class Query2Job {
 
     private static void emitTopK(Map<Integer, Q2AirportStats> airportMap,
                                  long windowStart,
+                                 long windowEnd,
+                                 long maxKafkaProduceTime,
+                                 long outputTime,
+                                 int  totalFlights,
                                  Collector<Q2RankedEntry> out) {
         List<Q2AirportStats> statsList = new ArrayList<>(airportMap.values());
         statsList.removeIf(s -> s.numFlights < MIN_FLIGHTS || s.severeDelays == 0);
@@ -327,12 +399,61 @@ public class Query2Job {
         int limit = Math.min(10, statsList.size());
         for (int i = 0; i < limit; i++) {
             Q2AirportStats s = statsList.get(i);
-            out.collect(new Q2RankedEntry(
+            Q2RankedEntry entry = new Q2RankedEntry(
                     windowStart, i + 1, s.originAirportId,
                     s.numFlights, s.severeDelays,
                     s.getDepDelayMean(), s.getDepDelayMaxSafe(),
-                    s.getTopDelayedFlights()));
+                    s.getTopDelayedFlights());
+            entry.maxKafkaProduceTime  = maxKafkaProduceTime;
+            entry.outputTime           = outputTime;
+            entry.totalFlightsInWindow = totalFlights;
+            // triggerTs per le sliding = windowEnd (bordo destro della finestra,
+            // corrisponde all'ora del trigger)
+            entry.influxTs = windowEnd;
+            out.collect(entry);
         }
+    }
+
+    /**
+     * Formatta una riga per il CSV delle metriche di Q2.
+     * Viene emessa solo per rank==1, quindi una riga per trigger per window_type.
+     *
+     * throughput_rps = totalFlightsInWindow / window_duration_s
+     *   - sliding 1h:  duration = 3600 s
+     *   - sliding 6h:  duration = 21600 s
+     *   - global:      duration = (triggerTs - DATASET_START_MS) / 1000 s
+     *
+     * Formattato con 10 decimali (invece dei 2 di default) per evitare
+     * l'azzeramento visivo nei casi a bassa densità: con il minimo di
+     * 30 voli su una finestra 6h, 30/21600 = 0.0013888889, valore che
+     * con 2 decimali risulterebbe "0.00" ma con 10 resta pienamente
+     * distinguibile da zero.
+     */
+    private static String formatMetricsRow(Q2RankedEntry r, String windowType) {
+        long latencyMs = r.maxKafkaProduceTime > 0
+                ? r.outputTime - r.maxKafkaProduceTime : -1L;
+
+        long durationMs;
+        if ("global".equals(windowType)) {
+            long datasetStartMs = java.time.Instant.parse("2025-01-01T00:00:00Z").toEpochMilli();
+            durationMs = r.influxTs - datasetStartMs;
+        } else if ("6h".equals(windowType)) {
+            durationMs = 6 * 3600 * 1000L;
+        } else {
+            durationMs = 3600 * 1000L;
+        }
+        double durationSec = durationMs / 1000.0;
+        double throughputRps = durationSec > 0
+                ? (r.totalFlightsInWindow / durationSec) : 0.0;
+
+        return String.join(", ",
+                windowType,
+                CsvOutputFormatter.formatTimestamp(r.windowStart),
+                CsvOutputFormatter.formatTimestamp(r.influxTs),
+                String.valueOf(r.totalFlightsInWindow),
+                String.valueOf(latencyMs),
+                String.format(java.util.Locale.US, "%.10f", throughputRps)
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
