@@ -103,7 +103,11 @@ def load_external_q2(path: str) -> list[dict]:
     """
     Carica metrics_q2.csv.
     Colonne attese: window_type, window_start, trigger_ts, num_flights,
-                    latency_ms, throughput_rpm
+                    latency_ms, throughput_rps  (dopo il fix in Query2Job.java)
+
+    Retrocompatibile con la versione precedente che usava throughput_rpm:
+    se la colonna throughput_rps non esiste, tenta throughput_rpm e
+    converte in rps dividendo per 60 (rpm → rps: 1 rec/min = 1/60 rec/s).
 
     A differenza di Q1, Q2 ha tre window_type distinti (1h, 6h, global)
     con durate diverse e una sola riga per trigger (non per airline).
@@ -114,18 +118,28 @@ def load_external_q2(path: str) -> list[dict]:
         reader = csv.DictReader(f, skipinitialspace=True)
         for row in reader:
             try:
+                # Supporta sia il nuovo schema (throughput_rps) che il vecchio (throughput_rpm)
+                if "throughput_rps" in row:
+                    thr_rps = float(row["throughput_rps"])
+                elif "throughput_rpm" in row:
+                    thr_rps = float(row["throughput_rpm"]) / 60.0
+                else:
+                    raise KeyError("throughput_rps")
+
                 rows.append({
-                    "window_type":  row["window_type"].strip(),
-                    "window_start": row["window_start"].strip(),
-                    "window_end":   row["trigger_ts"].strip(),  # alias per compatibilità
-                    "airline":      "",  # Q2 non è per-airline
-                    "num_flights":  int(row["num_flights"]),
-                    "latency_ms":   int(row["latency_ms"]),
-                    "throughput_rpm": float(row["throughput_rpm"]),
+                    "window_type":    row["window_type"].strip(),
+                    "window_start":   row["window_start"].strip(),
+                    "window_end":     row["trigger_ts"].strip(),  # alias per compatibilità
+                    "airline":        "",  # Q2 non è per-airline
+                    "num_flights":    int(row["num_flights"]),
+                    "latency_ms":     int(row["latency_ms"]),
+                    "throughput_rpm": thr_rps * 60.0,  # manteniamo la chiave interna per compatibilità
+                    "throughput_rps": thr_rps,          # nuova chiave nativa
                 })
             except (KeyError, ValueError) as e:
                 print(f"  [WARN] riga saltata in {path}: {e} → {dict(row)}", file=sys.stderr)
     return rows
+
 
 
 # ── Lettura CSV interno ───────────────────────────────────────────────────────
@@ -605,7 +619,8 @@ def compute_external_stats_q2(ext_rows: list[dict]) -> dict:
 
     for wt, rows in by_type.items():
         lat_valid = [r["latency_ms"]     for r in rows if r["latency_ms"]     > 0]
-        rpm_valid = [r["throughput_rpm"] for r in rows if r["throughput_rpm"] > 0]
+        rps_valid = [r["throughput_rps"] for r in rows if r["throughput_rps"] > 0]
+        rpm_valid = [v * 60.0 for v in rps_valid]  # derivato per display
 
         entry = {"n_windows": len(rows)}
         if lat_valid:
@@ -616,8 +631,14 @@ def compute_external_stats_q2(ext_rows: list[dict]) -> dict:
                 "lat_min":    min(lat_valid),
                 "lat_max":    max(lat_valid),
             })
-        if rpm_valid:
+        if rps_valid:
             entry.update({
+                # Unità primaria: rps (diretta dal CSV aggiornato)
+                "thr_rps_mean":   round(mean(rps_valid),   10),
+                "thr_rps_median": round(median(rps_valid), 10),
+                "thr_rps_min":    round(min(rps_valid),    10),
+                "thr_rps_max":    round(max(rps_valid),    10),
+                # Manteniamo anche rpm per display nei summary (più leggibile)
                 "thr_rpm_mean":   round(mean(rpm_valid),   4),
                 "thr_rpm_median": round(median(rpm_valid), 4),
                 "thr_rpm_min":    round(min(rpm_valid),    4),
@@ -650,11 +671,14 @@ def print_summary_q2(ext_stats: dict, int_stats: dict, branch_stats: dict = None
             print(f"    Latenza ms  mean/med/stdev : "
                   f"{e['lat_mean']} / {e['lat_median']} / {e['lat_stdev']}")
             print(f"    Latenza ms  min/max         : {e['lat_min']} / {e['lat_max']}")
-        if "thr_rpm_mean" in e:
+        if "thr_rps_mean" in e:
+            print(f"    Throughput rps mean/med     : "
+                  f"{e['thr_rps_mean']:.10f} / {e['thr_rps_median']:.10f}")
+            print(f"    Throughput rps min/max      : "
+                  f"{e['thr_rps_min']:.10f} / {e['thr_rps_max']:.10f}")
             print(f"    Throughput rpm mean/med     : "
-                  f"{e['thr_rpm_mean']} / {e['thr_rpm_median']}")
-            print(f"    Throughput rpm min/max      : "
-                  f"{e['thr_rpm_min']} / {e['thr_rpm_max']}")
+                  f"{e['thr_rpm_mean']} / {e['thr_rpm_median']}"
+                  f"  (= rps × 60, per leggibilità)")
         if "total_flights_final" in e:
             print(f"    Voli totali (ultimo trigger): {e['total_flights_final']:,}")
 
@@ -913,11 +937,13 @@ def write_summary_q2(summary_path, ext_stats, int_stats, query_tag, branch_stats
                 f.write(f"    Latenza ms   stdev     : {e['lat_stdev']}\n")
                 f.write(f"    Latenza ms   min       : {e['lat_min']}\n")
                 f.write(f"    Latenza ms   max       : {e['lat_max']}\n")
-            if "thr_rpm_mean" in e:
-                f.write(f"    Throughput rpm mean    : {e['thr_rpm_mean']}\n")
+            if "thr_rps_mean" in e:
+                f.write(f"    Throughput rps mean    : {e['thr_rps_mean']:.10f}\n")
+                f.write(f"    Throughput rps median  : {e['thr_rps_median']:.10f}\n")
+                f.write(f"    Throughput rps min     : {e['thr_rps_min']:.10f}\n")
+                f.write(f"    Throughput rps max     : {e['thr_rps_max']:.10f}\n")
+                f.write(f"    Throughput rpm mean    : {e['thr_rpm_mean']}  (= rps × 60)\n")
                 f.write(f"    Throughput rpm median  : {e['thr_rpm_median']}\n")
-                f.write(f"    Throughput rpm min     : {e['thr_rpm_min']}\n")
-                f.write(f"    Throughput rpm max     : {e['thr_rpm_max']}\n")
             if "total_flights_final" in e:
                 f.write(f"    Voli totali (finale)   : {e['total_flights_final']:,}\n")
             f.write("\n")
