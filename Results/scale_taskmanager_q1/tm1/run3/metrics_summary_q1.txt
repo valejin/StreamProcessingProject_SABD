@@ -1,0 +1,50 @@
+RIEPILOGO METRICHE Q1 — SABD Progetto 2
+Generato: 2026-07-02T11:58:29.986019
+========================================================================
+
+CANALE ESTERNO (metrics_q1.csv)
+  Misura : throughput_rpm = num_flights / 60 min (per finestra, per airline)
+           latency_ms = System.currentTimeMillis() - max(kafkaProduceTime)
+
+  Finestre totali          : 9761
+  Voli totali elaborati    : 1,322,418
+  Latenza ms   mean        : 168.6
+  Latenza ms   median      : 169
+  Latenza ms   stdev       : 61.0
+  Latenza ms   min         : 35
+  Latenza ms   max         : 448
+  Throughput/finestra rpm  : mean=2.258  median=2.3167  min=0.0167  max=5.4667
+  Throughput/finestra rps  : mean=0.037633  median=0.038612
+  Throughput sistema (rps) : 5086.22 rec/s
+    = 1,322,418 voli / 260s esecuzione
+
+CANALE INTERNO (metrics_flink_internal_q1.csv)
+  Misura : filter_rps = numRecordsOutPerSecond vertex Filter (EWMA Flink REST)
+
+  Campioni totali          : 47 (43 attivi, 4 warm-up esclusi)
+  Durata sessione          : 260s (4.3 min)
+  filter_rps mean          : 4661.67 rec/s
+  filter_rps median        : 5244.9 rec/s
+  filter_rps stdev         : 1305.15 rec/s
+  filter_rps min           : 551.47 rec/s
+  filter_rps max           : 5330.83 rec/s
+  Busy ms/s mean           : 93.5 (9.3% utilizzo)
+  Busy ms/s max            : 1000.0 (100.0%)
+  Backpressure             : assente (0 campioni)
+
+CONFRONTO NELLA GRANDEZZA COMUNE (rec/s a livello di sistema)
+  Canale esterno (derivato): 5086.22 rec/s
+    = 1,322,418 voli / 260s
+  Canale interno (EWMA)    : 4661.67 rec/s
+    = media filter_rps sui campioni attivi
+  Scarto relativo          : 8.3%
+  Valutazione              : coerenti (scarto <10%)
+
+NOTE METODOLOGICHE
+  - Latenza: la misura esterna (kafkaProduceTime → outputTime) include
+    il tempo di buffering nella finestra. Il LatencyMarker interno di Flink
+    NON include il buffer di finestra → misura esterna più accurata.
+  - Throughput: EWMA (interno) pesa i burst recenti più della media globale
+    (esterno derivato). Scarto <10% tra i due metodi è atteso e accettabile.
+  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo
+    di bottiglia durante l'esecuzione.

@@ -1,0 +1,22 @@
+AGGREGAZIONE SU 3 RIPETIZIONI — query=q2 (p=4)
+======================================================================
+
+Throughput sistema (rps)        : mean= 6821.2733  stdev=163.7175  cv=  2.4%   valori=[6926.5100, 6632.6500, 6904.6600]
+filter_rps mean (rec/s)         : mean= 6455.9867  stdev=189.2131  cv=  2.9%   valori=[6570.8400, 6237.6000, 6559.5200]
+Latenza mean (ms) [1h]          : mean=  667.7000  stdev=188.5671  cv= 28.2%   valori=[555.3000, 885.4000, 562.4000]
+Latenza mean (ms) [6h]          : mean=  648.7667  stdev=190.3287  cv= 29.3%   valori=[535.3000, 868.5000, 542.5000]
+Latenza mean (ms) [global]      : mean=  801.1333  stdev=202.1074  cv= 25.2%   valori=[682.9000, 1034.5000, 686.0000]
+Latenza median (ms) [1h]        : mean=  173.6667  stdev=  6.3509  cv=  3.7%   valori=[170.0000, 181.0000, 170.0000]
+Latenza median (ms) [6h]        : mean=  167.6667  stdev=  8.0829  cv=  4.8%   valori=[163.0000, 177.0000, 163.0000]
+Latenza median (ms) [global]    : mean=  155.5000  stdev= 13.6107  cv=  8.8%   valori=[153.5000, 170.0000, 143.0000]
+Throughput rps mean [1h]        : mean=    0.2864  stdev=  0.0000  cv=  0.0%   valori=[0.2864, 0.2864, 0.2864]
+Throughput rps mean [6h]        : mean=    0.2248  stdev=  0.0000  cv=  0.0%   valori=[0.2248, 0.2248, 0.2248]
+Throughput rps mean [global]    : mean=    0.2012  stdev=  0.0002  cv=  0.1%   valori=[0.2013, 0.2013, 0.2010]
+Busy % mean [1h]                : mean=    3.7000  stdev=  0.1000  cv=  2.7%   valori=[3.8000, 3.6000, 3.7000]
+Busy % mean [6h]                : mean=    4.4333  stdev=  0.1528  cv=  3.4%   valori=[4.6000, 4.3000, 4.4000]
+Busy % mean [global]            : mean=   52.7000  stdev=  0.4359  cv=  0.8%   valori=[53.0000, 52.9000, 52.2000]
+Scarto relativo canali (%)      : mean=    5.3667  stdev=  0.5508  cv= 10.3%   valori=[5.1000, 6.0000, 5.0000]
+
+cv (coefficiente di variazione) = stdev/mean*100 — indica quanto
+rumore c'e' a parita' di configurazione. Una differenza tra parallelism
+diversi e' un segnale credibile solo se supera chiaramente questo cv%.

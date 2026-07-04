@@ -1,0 +1,156 @@
+
+=== TaskManager=4 — aggregato su 3 ripetizioni (query=q1, TSF=86400) ===
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:RIEPILOGO METRICHE Q1 — SABD Progetto 2
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:Generato: 2026-07-02T14:04:07.430525
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:========================================================================
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:CANALE ESTERNO (metrics_q1.csv)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Misura : throughput_rpm = num_flights / 60 min (per finestra, per airline)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:           latency_ms = System.currentTimeMillis() - max(kafkaProduceTime)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Finestre totali          : 9761
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Voli totali elaborati    : 1,322,418
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Latenza ms   mean        : 172.4
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Latenza ms   median      : 172
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Latenza ms   stdev       : 67.1
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Latenza ms   min         : 15
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Latenza ms   max         : 576
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Throughput/finestra rpm  : mean=2.258  median=2.3167  min=0.0167  max=5.4667
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Throughput/finestra rps  : mean=0.037633  median=0.038612
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Throughput sistema (rps) : 4640.06 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    = 1,322,418 voli / 285s esecuzione
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:CANALE INTERNO (metrics_flink_internal_q1.csv)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Misura : filter_rps = numRecordsOutPerSecond vertex Filter (EWMA Flink REST)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Campioni totali          : 51 (47 attivi, 4 warm-up esclusi)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Durata sessione          : 285s (4.8 min)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  filter_rps mean          : 4269.72 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  filter_rps median        : 4871.68 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  filter_rps stdev         : 1287.43 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  filter_rps min           : 340.18 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  filter_rps max           : 5016.47 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Busy ms/s mean           : 39.8 (4.0% utilizzo)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Busy ms/s max            : 1000.0 (100.0%)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Backpressure             : assente (0 campioni)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:CONFRONTO NELLA GRANDEZZA COMUNE (rec/s a livello di sistema)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Canale esterno (derivato): 4640.06 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    = 1,322,418 voli / 285s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Canale interno (EWMA)    : 4269.72 rec/s
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    = media filter_rps sui campioni attivi
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Scarto relativo          : 8.0%
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  Valutazione              : coerenti (scarto <10%)
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:NOTE METODOLOGICHE
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  - Latenza: la misura esterna (kafkaProduceTime → outputTime) include
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    il tempo di buffering nella finestra. Il LatencyMarker interno di Flink
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    NON include il buffer di finestra → misura esterna più accurata.
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  - Throughput: EWMA (interno) pesa i burst recenti più della media globale
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    (esterno derivato). Scarto <10% tra i due metodi è atteso e accettabile.
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo
+run1: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run1/metrics_summary_q1.txt:    di bottiglia durante l'esecuzione.
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:RIEPILOGO METRICHE Q1 — SABD Progetto 2
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:Generato: 2026-07-02T14:10:16.611257
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:========================================================================
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:CANALE ESTERNO (metrics_q1.csv)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Misura : throughput_rpm = num_flights / 60 min (per finestra, per airline)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:           latency_ms = System.currentTimeMillis() - max(kafkaProduceTime)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Finestre totali          : 9761
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Voli totali elaborati    : 1,322,418
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Latenza ms   mean        : 173.8
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Latenza ms   median      : 175
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Latenza ms   stdev       : 66.3
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Latenza ms   min         : 19
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Latenza ms   max         : 667
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Throughput/finestra rpm  : mean=2.258  median=2.3167  min=0.0167  max=5.4667
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Throughput/finestra rps  : mean=0.037633  median=0.038612
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Throughput sistema (rps) : 4756.9 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    = 1,322,418 voli / 278s esecuzione
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:CANALE INTERNO (metrics_flink_internal_q1.csv)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Misura : filter_rps = numRecordsOutPerSecond vertex Filter (EWMA Flink REST)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Campioni totali          : 50 (46 attivi, 4 warm-up esclusi)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Durata sessione          : 278s (4.6 min)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  filter_rps mean          : 4376.66 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  filter_rps median        : 4881.23 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  filter_rps stdev         : 1177.17 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  filter_rps min           : 586.13 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  filter_rps max           : 5016.18 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Busy ms/s mean           : 40.2 (4.0% utilizzo)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Busy ms/s max            : 1000.0 (100.0%)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Backpressure             : assente (0 campioni)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:CONFRONTO NELLA GRANDEZZA COMUNE (rec/s a livello di sistema)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Canale esterno (derivato): 4756.90 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    = 1,322,418 voli / 278s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Canale interno (EWMA)    : 4376.66 rec/s
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    = media filter_rps sui campioni attivi
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Scarto relativo          : 8.0%
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  Valutazione              : coerenti (scarto <10%)
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:NOTE METODOLOGICHE
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  - Latenza: la misura esterna (kafkaProduceTime → outputTime) include
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    il tempo di buffering nella finestra. Il LatencyMarker interno di Flink
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    NON include il buffer di finestra → misura esterna più accurata.
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  - Throughput: EWMA (interno) pesa i burst recenti più della media globale
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    (esterno derivato). Scarto <10% tra i due metodi è atteso e accettabile.
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo
+run2: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run2/metrics_summary_q1.txt:    di bottiglia durante l'esecuzione.
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:RIEPILOGO METRICHE Q1 — SABD Progetto 2
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:Generato: 2026-07-02T14:16:12.204047
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:========================================================================
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:CANALE ESTERNO (metrics_q1.csv)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Misura : throughput_rpm = num_flights / 60 min (per finestra, per airline)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:           latency_ms = System.currentTimeMillis() - max(kafkaProduceTime)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Finestre totali          : 9761
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Voli totali elaborati    : 1,322,418
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Latenza ms   mean        : 170.0
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Latenza ms   median      : 169
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Latenza ms   stdev       : 65.2
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Latenza ms   min         : 18
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Latenza ms   max         : 369
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Throughput/finestra rpm  : mean=2.258  median=2.3167  min=0.0167  max=5.4667
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Throughput/finestra rps  : mean=0.037633  median=0.038612
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Throughput sistema (rps) : 4861.83 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    = 1,322,418 voli / 272s esecuzione
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:CANALE INTERNO (metrics_flink_internal_q1.csv)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Misura : filter_rps = numRecordsOutPerSecond vertex Filter (EWMA Flink REST)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Campioni totali          : 49 (45 attivi, 4 warm-up esclusi)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Durata sessione          : 272s (4.5 min)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  filter_rps mean          : 4508.17 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  filter_rps median        : 5031.53 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  filter_rps stdev         : 1224.55 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  filter_rps min           : 671.43 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  filter_rps max           : 5130.62 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Busy ms/s mean           : 42.0 (4.2% utilizzo)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Busy ms/s max            : 1000.0 (100.0%)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Backpressure             : assente (0 campioni)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:CONFRONTO NELLA GRANDEZZA COMUNE (rec/s a livello di sistema)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Canale esterno (derivato): 4861.83 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    = 1,322,418 voli / 272s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Canale interno (EWMA)    : 4508.17 rec/s
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    = media filter_rps sui campioni attivi
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Scarto relativo          : 7.3%
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  Valutazione              : coerenti (scarto <10%)
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:NOTE METODOLOGICHE
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  - Latenza: la misura esterna (kafkaProduceTime → outputTime) include
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    il tempo di buffering nella finestra. Il LatencyMarker interno di Flink
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    NON include il buffer di finestra → misura esterna più accurata.
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  - Throughput: EWMA (interno) pesa i burst recenti più della media globale
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    (esterno derivato). Scarto <10% tra i due metodi è atteso e accettabile.
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo
+run3: /mnt/c/Users/Valen/Desktop/SreamProcessingProject_SABD/SreamProcessingProject_SABD/Results/scale_taskmanager_q1/tm4/run3/metrics_summary_q1.txt:    di bottiglia durante l'esecuzione.
+
+throughput_rps: mean=4384.850  stdev=97.519  cv%=2.22  n=3  vals=[4269.72, 4376.66, 4508.17]
+busy_pct: mean=4.0667  stdev=0.957  cv%=2.35  n=3  vals=[39.8, 40.2, 42.0]
+latenza_median_ms: mean=172.000  stdev=2.449  cv%=1.42  n=3  vals=[172, 175, 169]

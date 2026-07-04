@@ -1,0 +1,13 @@
+AGGREGAZIONE SU 3 RIPETIZIONI — query=q1
+======================================================================
+
+Throughput sistema (rps)        : mean=   4873.53  stdev=  202.19  cv=  4.1%   valori=[4640.06, 4990.26, 4990.26]
+Latenza mean (ms)               : mean=    169.53  stdev=    1.69  cv=  1.0%   valori=[171.40, 169.10, 168.10]
+Latenza median (ms)             : mean=    170.00  stdev=    1.73  cv=  1.0%   valori=[172.00, 169.00, 169.00]
+filter_rps mean (rec/s)         : mean=   4436.40  stdev=  203.45  cv=  4.6%   valori=[4242.12, 4419.14, 4647.93]
+Busy % mean                     : mean=      4.10  stdev=    0.17  cv=  4.2%   valori=[3.90, 4.20, 4.20]
+Scarto relativo canali (%)      : mean=      8.97  stdev=    2.27  cv= 25.3%   valori=[8.60, 11.40, 6.90]
+
+cv (coefficiente di variazione) = stdev/mean*100 — indica quanto
+rumore c'e' a parita' di configurazione. Una differenza tra parallelism
+diversi e' un segnale credibile solo se supera chiaramente questo cv%.

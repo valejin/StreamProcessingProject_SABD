@@ -1,0 +1,112 @@
+RIEPILOGO METRICHE Q2 — SABD Progetto 2
+Generato: 2026-07-02T22:18:47.414501
+========================================================================
+
+CANALE ESTERNO (metrics_q2.csv)
+  Misura : throughput_rpm = num_flights / window_duration_min
+           latency_ms = System.currentTimeMillis() - max(kafkaProduceTime)
+  Tre window_type con semantica diversa:
+    1h     : sliding, slide=60min, non cumulativa
+    6h     : sliding, slide=60min, non cumulativa
+    global : GlobalWindow, CUMULATIVA — ogni trigger ricomprende tutti
+             i voli precedenti, quindi num_flights cresce monotonicamente
+
+  Righe totali (tutti i window_type): 7597
+
+  [1h]  2032 trigger (prodotto almeno una riga)
+    Latenza ms   mean      : 2184.7
+    Latenza ms   median    : 186.5
+    Latenza ms   stdev     : 4638.5
+    Latenza ms   min       : 32
+    Latenza ms   max       : 20802
+    Throughput rps mean    : 0.2864267553
+    Throughput rps median  : 0.3034722222
+    Throughput rps min     : 0.0491666667
+    Throughput rps max     : 0.4100000000
+    Throughput rpm mean    : 17.1856  (= rps × 60)
+    Throughput rpm median  : 18.2083
+
+  [6h]  2686 trigger (prodotto almeno una riga)
+    Latenza ms   mean      : 2181.6
+    Latenza ms   median    : 192.0
+    Latenza ms   stdev     : 4598.0
+    Latenza ms   min       : 33
+    Latenza ms   max       : 20803
+    Throughput rps mean    : 0.2248065932
+    Throughput rps median  : 0.2667824075
+    Throughput rps min     : 0.0081944444
+    Throughput rps max     : 0.3607870370
+    Throughput rpm mean    : 13.4884  (= rps × 60)
+    Throughput rpm median  : 16.0069
+
+  [global]  2879 trigger (prodotto almeno una riga)
+    Latenza ms   mean      : 2374.7
+    Latenza ms   median    : 256
+    Latenza ms   stdev     : 4818.7
+    Latenza ms   min       : 7
+    Latenza ms   max       : 21346
+    Throughput rps mean    : 0.2010138766
+    Throughput rps median  : 0.2007573645
+    Throughput rps min     : 0.0750396825
+    Throughput rps max     : 0.2202941176
+    Throughput rpm mean    : 12.0608  (= rps × 60)
+    Throughput rpm median  : 12.0454
+    Voli totali (finale)   : 2,188,776
+
+CANALE INTERNO — SOURCE (metrics_flink_internal_q2.csv)
+  Misura : filter_rps = numRecordsOutPerSecond vertex Source/Filter
+           (volume reale di ingestion: tutti e tre i rami window
+            leggono dallo stesso stream filtrato condiviso)
+
+  Campioni totali          : 56 (52 attivi, 4 warm-up esclusi)
+  Durata sessione          : 305s (5.1 min)
+  filter_rps mean          : 6668.44 rec/s
+  filter_rps median        : 7411.26 rec/s
+  filter_rps stdev         : 1660.35 rec/s
+  filter_rps min           : 1451.22 rec/s
+  filter_rps max           : 8000.22 rec/s
+
+CANALE INTERNO — PER RAMO WINDOW (chi satura la CPU?)
+  Ciascuna delle tre finestre gira su un operatore Flink separato;
+  queste metriche isolano il contributo di ciascun ramo.
+
+  [1h]
+    Busy ms/s    mean      : 87.0 (8.7% medio)
+    Busy ms/s    max       : 1000.0 (100.0% picco)
+    Backpressure campioni  : 0
+    Trigger out rps mean   : 6.2244  (max: 8.05)
+
+  [6h]
+    Busy ms/s    mean      : 124.7 (12.5% medio)
+    Busy ms/s    max       : 1000.0 (100.0% picco)
+    Backpressure campioni  : 0
+    Trigger out rps mean   : 8.2365  (max: 10.5667)
+
+  [global]
+    Busy ms/s    mean      : 637.2 (63.7% medio)
+    Busy ms/s    max       : 1000.0 (100.0% picco)
+    Backpressure campioni  : 0
+    Trigger out rps mean   : 8.816  (max: 11.55)
+
+  Ramo con maggior utilizzo CPU medio: [global] (637 ms/s, 63.7%)
+
+CONFRONTO NELLA GRANDEZZA COMUNE (rec/s a livello di sistema)
+  Canale esterno (derivato): 7176.31 rec/s
+    = 2,188,776 voli (ultimo trigger global) / 305s
+  Canale interno (EWMA)    : 6668.44 rec/s
+  Scarto relativo          : 7.1%
+  Valutazione              : coerenti (scarto <10%)
+
+NOTE METODOLOGICHE
+  - Le tre finestre (1h, 6h, global) hanno semantiche temporali diverse
+    e non sono sommabili tra loro: 1h e 6h sono sliding (overlap tra
+    trigger consecutivi), global è cumulativa dall'inizio del dataset.
+  - Il throughput sistema è stimato dal conteggio dell'ultimo trigger
+    'global' (il più rappresentativo, essendo cumulativo) diviso per la
+    durata di sessione osservata dal canale interno.
+  - Latenza: stessa metodologia di Q1 (kafkaProduceTime → outputTime),
+    include il buffering di finestra. Per 'global', la finestra non si
+    chiude mai: la latenza riflette il tempo dall'ultimo evento al
+    trigger periodico (ContinuousEventTimeTrigger ogni 60min event time).
+  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo
+    di bottiglia durante l'esecuzione.
