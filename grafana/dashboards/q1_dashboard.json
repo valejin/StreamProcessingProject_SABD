@@ -98,33 +98,6 @@
           "min": 0
         }
       }
-    },
-
-    {
-      "id": 5,
-      "title": "Ultima finestra – Statistiche compagnie",
-      "type": "table",
-      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 7 },
-      "datasource": { "type": "influxdb", "uid": "P39102A827A7EB03F" },
-      "targets": [
-        {
-          "refId": "A",
-          "query": "from(bucket: \"flights\")\n  |> range(start: -2h)\n  |> filter(fn: (r) => r._measurement == \"q1_metrics\")\n  |> filter(fn: (r) => r._field == \"num_flights\" or r._field == \"dep_delay_mean\" or r._field == \"cancellation_rate\" or r._field == \"late_departure_rate\")\n  |> last()\n  |> pivot(rowKey: [\"airline\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"airline\"])"
-        }
-      ],
-      "options": {
-        "sortBy": [{ "displayName": "airline", "desc": false }]
-      },
-      "fieldConfig": {
-        "overrides": [
-          { "matcher": { "id": "byName", "options": "cancellation_rate" },
-            "properties": [{ "id": "unit", "value": "percent" }] },
-          { "matcher": { "id": "byName", "options": "late_departure_rate" },
-            "properties": [{ "id": "unit", "value": "percent" }] },
-          { "matcher": { "id": "byName", "options": "dep_delay_mean" },
-            "properties": [{ "id": "unit", "value": "m" }] }
-        ]
-      }
     }
   ],
 
