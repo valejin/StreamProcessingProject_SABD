@@ -15,6 +15,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
+import java.time.Duration;
 import java.util.Set;
 
 /**
@@ -48,6 +49,10 @@ public class Query1Job {
             System.getenv().getOrDefault("KAFKA_BROKER",   "kafka:29092");
     private static final String KAFKA_TOPIC  =
             System.getenv().getOrDefault("KAFKA_TOPIC",    "flights");
+    private static final String KAFKA_GROUP_ID =
+            System.getenv().getOrDefault("KAFKA_GROUP_ID_Q1",
+                    "flink-q1-group-" + System.currentTimeMillis());
+
     private static final String OUTPUT_PATH  =
             System.getenv().getOrDefault("Q1_OUTPUT_PATH", "/results/q1_output.csv");
 
@@ -66,10 +71,21 @@ public class Query1Job {
 
         // ── 2. Sorgente Kafka ─────────────────────────────────────────────────
         KafkaSource<FlightEvent> kafkaSource = FlinkSourceBuilder.buildKafkaSource(
-                KAFKA_BROKER, KAFKA_TOPIC, "flink-q1-group");
+                KAFKA_BROKER, KAFKA_TOPIC, KAFKA_GROUP_ID);
 
+        // .withIdleness(): necessario quando il parallelism del job supera il numero
+        // di partizioni Kafka (oggi 1). In quel caso alcuni subtask della sorgente
+        // non ricevono mai nessuna partizione e restano permanentemente idle: senza
+        // questa chiamata il loro watermark resta fermo a -infinito per sempre, e
+        // poiché il watermark complessivo dell'operatore è il MINIMO tra tutti i
+        // subtask paralleli, un solo subtask idle blocca l'avanzamento del watermark
+        // dell'intera pipeline — nessuna finestra tumbling si chiude mai, zero output.
+        // Stesso identico meccanismo (e stessa soglia) già usato in Query2Job per i
+        // gap notturni: qui il "gap" è permanente (subtask senza partizioni) invece
+        // che temporaneo, ma il fix è lo stesso.
         WatermarkStrategy<FlightEvent> watermarkStrategy =
-                FlinkSourceBuilder.buildWatermarkStrategy();
+                FlinkSourceBuilder.buildWatermarkStrategy()
+                        .withIdleness(Duration.ofSeconds(10));
 
         DataStream<FlightEvent> flights = env
                 .fromSource(kafkaSource, watermarkStrategy, "Kafka flights source");

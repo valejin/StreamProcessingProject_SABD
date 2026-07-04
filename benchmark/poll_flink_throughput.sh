@@ -150,30 +150,83 @@ except Exception:
     || python3 -c "import sys; print(','.join('0.0' for _ in sys.argv[1:]))" "${keys[@]}"
 }
 
-discover_metric_names() {
+# Scopre TUTTE le chiavi metrica che contengono il pattern, non solo la prima.
+# Necessario perché con parallelism > partizioni Kafka disponibili esiste
+# una chiave per subtask (es. "0.Filter...", "1.Filter..."), e solo una è
+# quella del subtask che riceve davvero dati — prendere "la prima" (come
+# faceva discover_metric_names) rischia di selezionare un subtask idle e
+# campionare zero per tutta la sessione, anche se la pipeline lavora
+# correttamente altrove.
+discover_all_metric_keys() {
     local job_id="$1"
     local vertex_id="$2"
-    shift 2
-    local patterns=("$@")
+    local pattern="$3"
 
     if [ -z "$vertex_id" ]; then
-        for _ in "${patterns[@]}"; do echo ""; done
         return
     fi
 
     curl -sf "$FLINK_URL/jobs/$job_id/vertices/$vertex_id/metrics" \
         | python3 -c "
 import sys, json
-patterns = sys.argv[1:]
+pattern = sys.argv[1]
 try:
     metrics = json.load(sys.stdin)
     names = [m['id'] for m in metrics]
 except Exception:
     names = []
-for p in patterns:
-    match = next((n for n in names if p in n), '')
-    print(match)
-" "${patterns[@]}" 2>/dev/null
+for n in names:
+    if pattern in n:
+        print(n)
+" "$pattern" 2>/dev/null
+}
+
+# Somma i valori di più chiavi in un'unica chiamata REST (una fetch_batch +
+# somma in Python). Usato per throughput (numRecordsOutPerSecond): esattamente
+# un subtask è attivo, gli altri restano a zero — la somma dà il valore
+# corretto indipendentemente da quale subtask sia quello attivo.
+fetch_sum() {
+    local job_id="$1"
+    local vertex_id="$2"
+    shift 2
+    local keys=("$@")
+
+    if [ -z "$vertex_id" ] || [ ${#keys[@]} -eq 0 ]; then
+        echo "0.0"
+        return
+    fi
+
+    local vals
+    vals=$(fetch_batch "$job_id" "$vertex_id" "${keys[@]}")
+    python3 -c "
+import sys
+vals = sys.argv[1].split(',')
+print(f'{sum(float(v) for v in vals if v):.4f}')
+" "$vals"
+}
+
+# Massimo tra più chiavi. Usato per busy/backpressure/idle time: ha senso
+# il picco tra i subtask (il più carico), non la somma — stessa convenzione
+# "Busy (max)" già usata dalla Flink Web UI nel grafo del job.
+fetch_max() {
+    local job_id="$1"
+    local vertex_id="$2"
+    shift 2
+    local keys=("$@")
+
+    if [ -z "$vertex_id" ] || [ ${#keys[@]} -eq 0 ]; then
+        echo "0.0"
+        return
+    fi
+
+    local vals
+    vals=$(fetch_batch "$job_id" "$vertex_id" "${keys[@]}")
+    python3 -c "
+import sys
+vals = sys.argv[1].split(',')
+nums = [float(v) for v in vals if v]
+print(f'{max(nums) if nums else 0.0:.4f}')
+" "$vals"
 }
 
 echo "[poll] Ricerca job RUNNING su $FLINK_URL ..."
@@ -200,27 +253,23 @@ echo "[poll] Output               : $OUTPUT_FILE"
 echo "[poll] Intervallo           : ${INTERVAL}s"
 echo ""
 
-echo "[poll] Scoperta nomi metrica sul vertex SOURCE..."
-SRC_METRIC_NAMES=$(discover_metric_names "$JOB_ID" "$VID_SOURCE" \
-    "Source__Kafka_flights_source.numRecordsOutPerSecond" \
-    "Filter.numRecordsOutPerSecond")
-SRC_KAFKA_KEY=$(echo "$SRC_METRIC_NAMES" | sed -n '1p')
-SRC_FILTER_KEY=$(echo "$SRC_METRIC_NAMES" | sed -n '2p')
+echo "[poll] Scoperta nomi metrica sul vertex SOURCE (tutti i subtask)..."
+mapfile -t SRC_KAFKA_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_SOURCE" "Source__Kafka_flights_source.numRecordsOutPerSecond")
+mapfile -t SRC_FILTER_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_SOURCE" "Filter.numRecordsOutPerSecond")
+mapfile -t SRC_BUSY_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_SOURCE" "busyTimeMsPerSecond")
+mapfile -t SRC_BACKPRESSURE_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_SOURCE" "backPressuredTimeMsPerSecond")
+mapfile -t SRC_IDLE_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_SOURCE" "idleTimeMsPerSecond")
 
-[ -z "$SRC_KAFKA_KEY" ]  && SRC_KAFKA_KEY="0.numRecordsOutPerSecond"
-[ -z "$SRC_FILTER_KEY" ] && SRC_FILTER_KEY="0.numRecordsOutPerSecond"
+[ ${#SRC_KAFKA_KEYS[@]} -eq 0 ]        && SRC_KAFKA_KEYS=("0.numRecordsOutPerSecond")
+[ ${#SRC_FILTER_KEYS[@]} -eq 0 ]       && SRC_FILTER_KEYS=("0.numRecordsOutPerSecond")
+[ ${#SRC_BUSY_KEYS[@]} -eq 0 ]         && SRC_BUSY_KEYS=("0.busyTimeMsPerSecond")
+[ ${#SRC_BACKPRESSURE_KEYS[@]} -eq 0 ] && SRC_BACKPRESSURE_KEYS=("0.backPressuredTimeMsPerSecond")
+[ ${#SRC_IDLE_KEYS[@]} -eq 0 ]         && SRC_IDLE_KEYS=("0.idleTimeMsPerSecond")
 
-echo "[poll]   Kafka source key : ${SRC_KAFKA_KEY}"
-echo "[poll]   Filter key       : ${SRC_FILTER_KEY}"
+echo "[poll]   Kafka source key(s) : ${SRC_KAFKA_KEYS[*]}  (sommate)"
+echo "[poll]   Filter key(s)       : ${SRC_FILTER_KEYS[*]}  (sommate)"
+echo "[poll]   Busy key(s)         : ${SRC_BUSY_KEYS[*]}  (massimo)"
 echo ""
-
-SRC_KEYS=(
-    "$SRC_KAFKA_KEY"
-    "$SRC_FILTER_KEY"
-    "0.busyTimeMsPerSecond"
-    "0.backPressuredTimeMsPerSecond"
-    "0.idleTimeMsPerSecond"
-)
 
 WIN_KEYS=(
     "0.numRecordsInPerSecond"
@@ -229,6 +278,27 @@ WIN_KEYS=(
     "0.backPressuredTimeMsPerSecond"
     "0.idleTimeMsPerSecond"
 )
+
+# Solo per Q1: il vertex WINDOW è dopo un keyBy(airline) reale, quindi eredita
+# il parallelism del job (fino a 4, una per compagnia) — stesso motivo per cui
+# serviva la somma su tutti i subtask per il vertex SOURCE. Le tre finestre di
+# Q2 (windowAll) restano invece SEMPRE a parallelism 1 per costruzione, quindi
+# per Q2 "0." è già corretto e WIN_KEYS sopra resta invariato.
+if [ "$QUERY" != "q2" ]; then
+    mapfile -t WIN_IN_KEYS  < <(discover_all_metric_keys "$JOB_ID" "$VID_WINDOW" "numRecordsInPerSecond")
+    mapfile -t WIN_OUT_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_WINDOW" "numRecordsOutPerSecond")
+    mapfile -t WIN_BUSY_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_WINDOW" "busyTimeMsPerSecond")
+    mapfile -t WIN_BACKPRESSURE_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_WINDOW" "backPressuredTimeMsPerSecond")
+    mapfile -t WIN_IDLE_KEYS < <(discover_all_metric_keys "$JOB_ID" "$VID_WINDOW" "idleTimeMsPerSecond")
+
+    [ ${#WIN_IN_KEYS[@]} -eq 0 ]            && WIN_IN_KEYS=("0.numRecordsInPerSecond")
+    [ ${#WIN_OUT_KEYS[@]} -eq 0 ]           && WIN_OUT_KEYS=("0.numRecordsOutPerSecond")
+    [ ${#WIN_BUSY_KEYS[@]} -eq 0 ]          && WIN_BUSY_KEYS=("0.busyTimeMsPerSecond")
+    [ ${#WIN_BACKPRESSURE_KEYS[@]} -eq 0 ]  && WIN_BACKPRESSURE_KEYS=("0.backPressuredTimeMsPerSecond")
+    [ ${#WIN_IDLE_KEYS[@]} -eq 0 ]          && WIN_IDLE_KEYS=("0.idleTimeMsPerSecond")
+
+    echo "[poll]   Window in/out key(s) : ${WIN_IN_KEYS[*]} | ${WIN_OUT_KEYS[*]}  (sommate)"
+fi
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -254,7 +324,12 @@ while is_job_running "$JOB_ID"; do
     TS_EPOCH=$(date +%s)
     TS_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    SOURCE_VALS=$(fetch_batch "$JOB_ID" "$VID_SOURCE" "${SRC_KEYS[@]}")
+    SRC_KAFKA_RPS=$(fetch_sum "$JOB_ID" "$VID_SOURCE" "${SRC_KAFKA_KEYS[@]}")
+    SRC_FILTER_RPS=$(fetch_sum "$JOB_ID" "$VID_SOURCE" "${SRC_FILTER_KEYS[@]}")
+    SRC_BUSY_MS=$(fetch_max "$JOB_ID" "$VID_SOURCE" "${SRC_BUSY_KEYS[@]}")
+    SRC_BACKPRESSURE_MS=$(fetch_max "$JOB_ID" "$VID_SOURCE" "${SRC_BACKPRESSURE_KEYS[@]}")
+    SRC_IDLE_MS=$(fetch_max "$JOB_ID" "$VID_SOURCE" "${SRC_IDLE_KEYS[@]}")
+    SOURCE_VALS="${SRC_KAFKA_RPS},${SRC_FILTER_RPS},${SRC_BUSY_MS},${SRC_BACKPRESSURE_MS},${SRC_IDLE_MS}"
 
     if [ "$QUERY" = "q2" ]; then
         WIN1H_VALS=$(fetch_batch "$JOB_ID" "$VID_WINDOW_1H"     "${WIN_KEYS[@]}")
@@ -272,16 +347,24 @@ while is_job_running "$JOB_ID"; do
                 "$TS_ISO" "$SAMPLE" "$FILTER_RPS" "$W1H_OUT" "$W6H_OUT" "$WGL_OUT" "$WGL_BUSY"
         fi
     else
-        WINDOW_VALS=$(fetch_batch "$JOB_ID" "$VID_WINDOW" \
-            "0.numRecordsInPerSecond" "0.numRecordsOutPerSecond" \
-            "0.numRecordsInPerSecond" \
-            "0.busyTimeMsPerSecond" "0.backPressuredTimeMsPerSecond" "0.idleTimeMsPerSecond")
+        WIN_RECORDS_IN=$(fetch_sum "$JOB_ID" "$VID_WINDOW" "${WIN_IN_KEYS[@]}")
+        WIN_RECORDS_OUT=$(fetch_sum "$JOB_ID" "$VID_WINDOW" "${WIN_OUT_KEYS[@]}")
+        WIN_BUSY_MS=$(fetch_max "$JOB_ID" "$VID_WINDOW" "${WIN_BUSY_KEYS[@]}")
+        WIN_BACKPRESSURE_MS=$(fetch_max "$JOB_ID" "$VID_WINDOW" "${WIN_BACKPRESSURE_KEYS[@]}")
+        WIN_IDLE_MS=$(fetch_max "$JOB_ID" "$VID_WINDOW" "${WIN_IDLE_KEYS[@]}")
+        # sink_csv_records_in_per_sec: nessun vertex Sink dedicato viene scoperto
+        # da questo script — il valore precedente qui interrogava per errore
+        # (copia-incolla) la stessa metrica del vertex WINDOW una seconda volta.
+        # Placeholder onesto a 0.0 finché non si implementa una vera discovery
+        # del vertex Sink; la colonna resta nello schema per compatibilità con
+        # compare_metrics.py (che la legge ma non la usa nelle statistiche).
+        WINDOW_VALS="${WIN_RECORDS_IN},${WIN_RECORDS_OUT},0.0,${WIN_BUSY_MS},${WIN_BACKPRESSURE_MS},${WIN_IDLE_MS}"
         echo "${TS_EPOCH},${TS_ISO},${JOB_ID},${SOURCE_VALS},${WINDOW_VALS}" >> "$OUTPUT_FILE"
 
         if (( SAMPLE % 10 == 0 )) || (( SAMPLE == 1 )); then
             FILTER_RPS=$(echo "$SOURCE_VALS" | cut -d',' -f2)
-            WIN_OUT=$(echo    "$WINDOW_VALS" | cut -d',' -f2)
-            BUSY_MS=$(echo    "$WINDOW_VALS" | cut -d',' -f4)
+            WIN_OUT="$WIN_RECORDS_OUT"
+            BUSY_MS="$WIN_BUSY_MS"
             printf "[%s] sample=%-4d | filter=%8.2f rec/s | window_out=%8.4f rec/s | busy=%4.0f ms/s\n" \
                 "$TS_ISO" "$SAMPLE" "$FILTER_RPS" "$WIN_OUT" "$BUSY_MS"
         fi

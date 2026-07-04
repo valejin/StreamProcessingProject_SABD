@@ -3,9 +3,16 @@
 # run_pipeline.sh — Avvia l'intero stack Stream Processing SABD
 #
 # Uso:
-#   bash run_pipeline.sh q1    → lancia solo Query1Job + metriche
-#   bash run_pipeline.sh q2    → lancia solo Query2Job + metriche
-#   bash run_pipeline.sh all   → lancia Q1 + Q2 + metriche
+#   bash run_pipeline.sh q1              → lancia Query1Job + metriche, parallelism=1
+#   bash run_pipeline.sh q2    4         → lancia Query2Job + metriche, parallelism=4
+#   bash run_pipeline.sh all   2         → lancia Q1 + Q2 + metriche, parallelism=2
+#
+# Il parallelism (secondo argomento, opzionale, default 1) viene passato
+# come 'flink run -p N': sovrascrive parallelism.default del cluster solo
+# per questo job, senza toccare docker-compose.yml. Utile per l'esperimento
+# di impatto del parallelismo richiesto dalla traccia. Combina con
+# TIME_SCALE_FACTOR per l'accelerazione del producer, es.:
+#   TIME_SCALE_FACTOR=360000 bash run_pipeline.sh q1 4
 #
 # Fasi eseguite automaticamente:
 #   1. Reset InfluxDB (stop/rm container + volume)
@@ -35,14 +42,19 @@ sep()  { echo -e "${CYN}$(printf '─%.0s' {1..72})${RST}"; }
 # ── Configurazione ────────────────────────────────────────────────────────────
 QUERY="${1:-}"
 [[ "$QUERY" =~ ^(q1|q2|all)$ ]] \
-    || { echo "Uso: bash run_pipeline.sh [q1|q2|all]"; exit 1; }
+    || { echo "Uso: bash run_pipeline.sh [q1|q2|all] [parallelism]"; exit 1; }
+
+# Parallelismo del job Flink (sovrascrive parallelism.default del cluster
+# solo per questo job, via 'flink run -p N'). Default 1 = comportamento
+# invariato rispetto a prima di questa modifica.
+PARALLELISM="${2:-1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 DOCKER_DIR="$PROJECT_ROOT/docker"
 PRODUCER_SCRIPT="$PROJECT_ROOT/producer/kafka_producer.py"
-POLL_SCRIPT="$PROJECT_ROOT/poll_flink_throughput.sh"
-COMPARE_SCRIPT="$PROJECT_ROOT/compare_metrics.py"
+POLL_SCRIPT="$PROJECT_ROOT/benchmark/poll_flink_throughput.sh"
+COMPARE_SCRIPT="$PROJECT_ROOT/benchmark/compare_metrics.py"
 
 FLINK_CONTAINER="flink-jobmanager"
 JAR_LOCAL="$PROJECT_ROOT/target/SreamProcessingProject_SABD-1.0-SNAPSHOT.jar"
@@ -73,13 +85,14 @@ POLL_PID=""
 run_flink_job() {
     local label="$1"
     local class="$2"
-    log "Submitting ${label}..."
+    log "Submitting ${label} (parallelism=${PARALLELISM})..."
     local output
     output=$(docker exec \
         -e KAFKA_BROKER="${KAFKA_BROKER}" \
         -e INFLUXDB_ENABLED="true" \
         "${FLINK_CONTAINER}" \
         flink run -d \
+            -p "${PARALLELISM}" \
             -c "${class}" \
             "${JAR_REMOTE}" 2>&1) \
         || die "Submit ${label} fallito:\n$output"
@@ -278,6 +291,15 @@ ok "Producer completato — tutti gli eventi inviati su Kafka."
 
 # ── STEP 8: Attesa + cancellazione job ────────────────────────────────────────
 sep
+
+# Ferma il polling REST subito dopo la fine del producer: la sessione
+# campionata (usata per calcolare duration_s e quindi throughput) deve
+# coprire solo la fase attiva di invio dati, non l'attesa a vuoto che segue.
+# Il countdown sotto resta invariato nello scopo — dare tempo a Flink di
+# chiudere le ultime finestre prima di cancellare il job — ma ora è un
+# problema separato dalla misurazione, non più mescolato con essa.
+stop_polling
+
 log "[8/9] Producer terminato. Attendo ${SHUTDOWN_WAIT}s prima di cancellare i job..."
 log "      (il tempo consente alle ultime finestre di essere processate)"
 
@@ -287,9 +309,6 @@ for remaining in $(seq $SHUTDOWN_WAIT -10 10); do
     log "  ... ${remaining}s rimanenti prima della cancellazione"
 done
 sleep $(( SHUTDOWN_WAIT % 10 ))   # resto eventuale
-
-# Ferma il polling REST prima di cancellare i job
-stop_polling
 
 # Cancella i job
 cancel_flink_jobs
@@ -343,4 +362,25 @@ echo ""
 echo "  Output disponibili in $RESULTS_DIR:"
 ls -lh "$RESULTS_DIR"/*.csv "$RESULTS_DIR"/*.txt 2>/dev/null \
     | awk '{print "    " $NF "  (" $5 ")"}' || true
+echo ""
+
+# ── Archiviazione automatica del run (per esperimenti a parallelismo/TSF diversi) ──
+# Copia (non sposta) gli output di questo run in una sottocartella etichettata
+# con query, parallelism e TIME_SCALE_FACTOR, così run successivi con
+# parametri diversi non sovrascrivono i risultati precedenti.
+# Segue la stessa convenzione di naming già usata manualmente per gli
+# esperimenti su TIME_SCALE_FACTOR (es. Results/q1_3600).
+ARCHIVE_TSF="${TIME_SCALE_FACTOR:-86400}"
+ARCHIVE_DIR="$RESULTS_DIR/${QUERY}_p${PARALLELISM}_tsf${ARCHIVE_TSF}"
+mkdir -p "$ARCHIVE_DIR"
+# Copia solo i file della query effettivamente eseguita (tutti i file di
+# output/metriche seguono la convenzione *q1*/*q2* nel nome), non l'intero
+# contenuto di Results/ — altrimenti file di run precedenti di un'altra
+# query, ancora presenti in Results/, finirebbero copiati per errore.
+case "$QUERY" in
+    q1)  cp "$RESULTS_DIR"/*q1*.csv "$RESULTS_DIR"/*q1*.txt "$ARCHIVE_DIR"/ 2>/dev/null || true ;;
+    q2)  cp "$RESULTS_DIR"/*q2*.csv "$RESULTS_DIR"/*q2*.txt "$ARCHIVE_DIR"/ 2>/dev/null || true ;;
+    all) cp "$RESULTS_DIR"/*.csv "$RESULTS_DIR"/*.txt "$ARCHIVE_DIR"/ 2>/dev/null || true ;;
+esac
+ok "Run archiviato in $ARCHIVE_DIR (copia — gli output in $RESULTS_DIR restano invariati)"
 echo ""

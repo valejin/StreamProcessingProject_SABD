@@ -29,13 +29,11 @@ import java.time.Duration;
  * Scegliamo BoundedOutOfOrderness con maxOutOfOrderness = 5 minuti di event time.
  *
  * Motivazione:
- *  - Con TIME_SCALE_FACTOR = 3600, 5 minuti di event time corrispondono a
- *    5*60 / 3600 ≈ 0.08 secondi reali: latenza aggiuntiva trascurabile.
+ *  - Con TIME_SCALE_FACTOR = 86400, 5 minuti di event time corrisponde a una
+ *    latenza aggiuntiva trascurabile.
  *  - È sufficiente ad assorbire il disordine da parallelismo Kafka su una
  *    singola macchina di sviluppo.
- *  - Scelte più aggressive (es. 30 min) non sarebbero giustificabili dato
- *    il basso disordine atteso; scelte più conservative (0 ms) rischierebbero
- *    di scartare eventi legittimi.
+ *
  *
  * Effetto sulle finestre:
  *  Una finestra [08:00, 09:00) viene chiusa quando il watermark supera

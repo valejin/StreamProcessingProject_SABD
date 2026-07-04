@@ -271,7 +271,11 @@ def compute_internal_stats_q2_branches(int_rows: list[dict]) -> dict:
 
     branches = {}
     for branch_name in ("win1h", "win6h", "winglobal"):
-        out_active = [r[branch_name]["out_rps"] for r in int_rows if r[branch_name]["out_rps"] > 0]
+        out_all_nonzero = [r[branch_name]["out_rps"] for r in int_rows if r[branch_name]["out_rps"] > 0]
+        out_peak = max(out_all_nonzero) if out_all_nonzero else 0.0
+        out_warmup_floor = out_peak * WARMUP_RELATIVE_THRESHOLD
+
+        out_active = [r[branch_name]["out_rps"] for r in int_rows if r[branch_name]["out_rps"] > out_warmup_floor]
         busy_all   = [r[branch_name]["busy_ms"] for r in int_rows]
         bp_nonzero = [r[branch_name]["bp_ms"]   for r in int_rows if r[branch_name]["bp_ms"] > 0]
 
@@ -287,6 +291,9 @@ def compute_internal_stats_q2_branches(int_rows: list[dict]) -> dict:
 
     return branches
 
+WARMUP_RELATIVE_THRESHOLD = 0.05  # 5% del picco del run: sotto = ancora in rampa
+
+
 def compute_internal_stats(int_rows: list[dict]) -> dict:
     """
     Aggrega i campioni REST in statistiche di sessione (rec/s).
@@ -297,7 +304,17 @@ def compute_internal_stats(int_rows: list[dict]) -> dict:
 
     Metrica chiave: filter_rps (numRecordsOutPerSecond del vertex Filter),
     che misura rec/s a livello di sistema — confrontabile con ext_sys_rps.
-    Campioni warm-up a 0 esclusi.
+
+    Esclusione warm-up: la sola condizione "filter_rps > 0" non basta,
+    perché la rampa di avvio del job (JobManager che schedula i task,
+    TaskManager che si registra, consumer group Kafka che fa rebalance)
+    produce campioni EWMA già non-zero ma ancora ben sotto il regime
+    (es. 21 rec/s con un regime di 5000+ rec/s) — soprattutto quando la
+    durata della rampa varia da run a run per jitter di sistema/Docker.
+    Si esclude quindi ogni campione sotto WARMUP_RELATIVE_THRESHOLD del
+    picco osservato in quel run: soglia relativa, non un conteggio fisso
+    di campioni, così si adatta automaticamente a run e configurazioni
+    (tm=1/2/4) con throughput di picco diverso.
     """
     if not int_rows:
         return {}
@@ -306,8 +323,16 @@ def compute_internal_stats(int_rows: list[dict]) -> dict:
     t_end   = int_rows[-1]["timestamp_epoch"]
     duration_s = max(t_end - t_start, 1)
 
-    filter_active  = [r["filter_rps"]      for r in int_rows if r["filter_rps"]      > 0]
-    win_out_active = [r["window_out_rps"]   for r in int_rows if r["window_out_rps"]  > 0]
+    filter_all_nonzero = [r["filter_rps"] for r in int_rows if r["filter_rps"] > 0]
+    filter_peak = max(filter_all_nonzero) if filter_all_nonzero else 0.0
+    filter_warmup_floor = filter_peak * WARMUP_RELATIVE_THRESHOLD
+
+    win_out_all_nonzero = [r["window_out_rps"] for r in int_rows if r["window_out_rps"] > 0]
+    win_out_peak = max(win_out_all_nonzero) if win_out_all_nonzero else 0.0
+    win_out_warmup_floor = win_out_peak * WARMUP_RELATIVE_THRESHOLD
+
+    filter_active  = [r["filter_rps"]     for r in int_rows if r["filter_rps"]     > filter_warmup_floor]
+    win_out_active = [r["window_out_rps"] for r in int_rows if r["window_out_rps"] > win_out_warmup_floor]
     busy_all       = [r["busy_ms"]          for r in int_rows]
     bp_nonzero     = [r["backpressure_ms"]  for r in int_rows if r["backpressure_ms"] > 0]
 
@@ -666,7 +691,7 @@ def print_summary_q2(ext_stats: dict, int_stats: dict, branch_stats: dict = None
         if wt not in ext_stats["by_type"]:
             continue
         e = ext_stats["by_type"][wt]
-        print(f"\n  [{wt}]  {e['n_windows']} trigger")
+        print(f"\n  [{wt}]  {e['n_windows']} trigger (prodotto almeno una riga)")
         if "lat_mean" in e:
             print(f"    Latenza ms  mean/med/stdev : "
                   f"{e['lat_mean']} / {e['lat_median']} / {e['lat_stdev']}")
@@ -930,7 +955,7 @@ def write_summary_q2(summary_path, ext_stats, int_stats, query_tag, branch_stats
             if wt not in ext_stats["by_type"]:
                 continue
             e = ext_stats["by_type"][wt]
-            f.write(f"  [{wt}]  {e['n_windows']} trigger\n")
+            f.write(f"  [{wt}]  {e['n_windows']} trigger (prodotto almeno una riga)\n")
             if "lat_mean" in e:
                 f.write(f"    Latenza ms   mean      : {e['lat_mean']}\n")
                 f.write(f"    Latenza ms   median    : {e['lat_median']}\n")

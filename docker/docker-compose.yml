@@ -85,7 +85,7 @@ services:
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.numberOfTaskSlots: 1
         parallelism.default: 1
         heartbeat.interval: 10000
         heartbeat.timeout: 120000
@@ -105,16 +105,19 @@ services:
       - sabd-network
 
   # ─── Flink TaskManager ──────────────────────────────────────────
+  # Modifica per scalabilità di TaskManager:
+  # numberOfTaskSlots: 1 -> ogni TaskManager espone UN solo slot, così
+  # il parallelism del job coincide con il numero di TaskManager (JVM
+  # separate)
   flink-taskmanager:
     image: flink:1.18-java11
-    container_name: flink-taskmanager
     command: taskmanager
     depends_on:
       - flink-jobmanager
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.numberOfTaskSlots: 1
         parallelism.default: 1
         heartbeat.interval: 10000
         heartbeat.timeout: 120000
