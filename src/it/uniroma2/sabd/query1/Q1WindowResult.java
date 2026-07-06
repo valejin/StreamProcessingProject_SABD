@@ -5,9 +5,6 @@ package it.uniroma2.sabd.query1;
  *
  * Viene aggiornato evento per evento all'interno della ProcessWindowFunction
  * e poi serializzato in una riga CSV al momento della chiusura della finestra.
- *
- * Campi separati per completati/cancellati/deviati invece di derivarli
- * a posteriori: più leggibile e più efficiente (nessun ricalcolo alla fine).
  */
 public class Q1WindowResult {
 
@@ -34,9 +31,6 @@ public class Q1WindowResult {
     /**
      * Somma cumulativa di DEP_DELAY per i voli non cancellati (completed + diverted).
      * Divisa per depDelayCount alla fine per ottenere la media.
-     *
-     * Nota: la traccia dice "dep_delay_mean considerando solo i voli non cancellati",
-     * quindi includiamo anche i deviati nel calcolo della media.
      */
     public double depDelaySum;
 
@@ -63,7 +57,6 @@ public class Q1WindowResult {
      * dove outputTime = System.currentTimeMillis() al momento dell'output.
      *
      * Valore 0 se nessun evento aveva kafkaProduceTime valorizzato
-     * (retrocompatibilità con messaggi prodotti prima dell'aggiunta del campo).
      */
     public long maxKafkaProduceTime;
 
@@ -117,11 +110,6 @@ public class Q1WindowResult {
     /**
      * Throughput in record per minuto di event time.
      * numFlights / durata_finestra_in_minuti (60 min per la tumbling 1h di Q1).
-     *
-     * Unità scelta al posto di record/s per evitare valori inferiori a 0.01
-     * nelle finestre notturne a bassa densità di voli, che verrebbero arrotondati
-     * a 0.00 con soli 2 decimali. Con record/min anche il caso peggiore
-     * (1 volo / 60 min = 0.0167) rimane distinguibile da zero.
      */
     public double getThroughputRpm() {
         long durationMs = windowEnd - windowStart;

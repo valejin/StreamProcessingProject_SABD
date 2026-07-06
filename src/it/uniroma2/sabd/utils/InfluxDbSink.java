@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Sink Flink che scrive su InfluxDB 2.x tramite Line Protocol via HTTP.
+ * Sink Flink che scrive su InfluxDB tramite Line Protocol via HTTP.
  *
  * Strategia di scrittura atomica per trigger:
  * - I record con lo stesso timestamp vengono bufferati.

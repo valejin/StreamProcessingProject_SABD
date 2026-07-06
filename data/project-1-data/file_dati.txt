@@ -1,0 +1,8 @@
+Questa directory è destinata a ospitare i seguenti file CSV:
+- 202501_T_ONLINE_REPORTING.CSV
+- 202502_T_ONLINE_REPORTING.CSV
+- 202503_T_ONLINE_REPORTING.CSV
+- 202504_T_ONLINE_REPORTING.CSV
+
+Nota: A causa delle loro dimensioni elevate, questi file non vengono caricati
+su GitHub (sono inclusi nel file .gitignore).

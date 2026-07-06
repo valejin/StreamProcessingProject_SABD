@@ -12,7 +12,7 @@
 # per questo job, senza toccare docker-compose.yml. Utile per l'esperimento
 # di impatto del parallelismo richiesto dalla traccia. Combina con
 # TIME_SCALE_FACTOR per l'accelerazione del producer, es.:
-#   TIME_SCALE_FACTOR=360000 bash run_pipeline.sh q1 4
+#   TIME_SCALE_FACTOR=86400 bash run_pipeline.sh q1 4
 #
 # Fasi eseguite automaticamente:
 #   1. Reset InfluxDB (stop/rm container + volume)
@@ -296,8 +296,7 @@ sep
 # campionata (usata per calcolare duration_s e quindi throughput) deve
 # coprire solo la fase attiva di invio dati, non l'attesa a vuoto che segue.
 # Il countdown sotto resta invariato nello scopo — dare tempo a Flink di
-# chiudere le ultime finestre prima di cancellare il job — ma ora è un
-# problema separato dalla misurazione, non più mescolato con essa.
+# chiudere le ultime finestre prima di cancellare il job.
 stop_polling
 
 log "[8/9] Producer terminato. Attendo ${SHUTDOWN_WAIT}s prima di cancellare i job..."

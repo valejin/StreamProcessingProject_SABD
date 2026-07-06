@@ -26,7 +26,7 @@ import java.time.Duration;
  *     il meccanismo di batching del consumer Kafka può alterare l'ordine
  *     su scala di pochi millisecondi.
  *
- * Scegliamo BoundedOutOfOrderness con maxOutOfOrderness = 5 minuti di event time.
+ * BoundedOutOfOrderness con maxOutOfOrderness = 5 minuti di event time.
  *
  * Motivazione:
  *  - Con TIME_SCALE_FACTOR = 86400, 5 minuti di event time corrisponde a una

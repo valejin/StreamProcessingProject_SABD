@@ -35,7 +35,7 @@
 #       singola ripetizione
 #   Results/scale_taskmanager_<query>/tm<N>/aggregate_summary_tm2.txt → media,
 #       stdev, cv% delle R ripetizioni per quel numero di TaskManager
-#   Results/scale_taskmanager_<query>/all_summaries.txt → tutti gli
+#   Results/scale_taskmanager_<query>/all_summaries_scale_q1.txt → tutti gli
 #       aggregate_summary concatenati, per confronto rapido tra tm1/tm2/tm4
 #
 # Riusa run_pipeline.sh così com'è (nessuna duplicazione di logica di

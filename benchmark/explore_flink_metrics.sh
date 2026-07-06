@@ -8,10 +8,8 @@
 # COME USARE:
 #   1. Avvia il job Flink (q1 o q2)
 #   2. Esegui: bash explore_flink_metrics.sh
-#   3. Incolla l'output nella chat per procedere con
-#      poll_flink_throughput.sh
+#   3. Ottiene l'output per procedere con poll_flink_throughput.sh
 #
-# REQUISITI: curl, python3 (solo stdlib)
 # ============================================================
 
 FLINK_URL="${FLINK_URL:-http://localhost:8081}"

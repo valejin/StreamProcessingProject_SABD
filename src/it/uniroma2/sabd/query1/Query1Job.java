@@ -73,16 +73,6 @@ public class Query1Job {
         KafkaSource<FlightEvent> kafkaSource = FlinkSourceBuilder.buildKafkaSource(
                 KAFKA_BROKER, KAFKA_TOPIC, KAFKA_GROUP_ID);
 
-        // .withIdleness(): necessario quando il parallelism del job supera il numero
-        // di partizioni Kafka (oggi 1). In quel caso alcuni subtask della sorgente
-        // non ricevono mai nessuna partizione e restano permanentemente idle: senza
-        // questa chiamata il loro watermark resta fermo a -infinito per sempre, e
-        // poiché il watermark complessivo dell'operatore è il MINIMO tra tutti i
-        // subtask paralleli, un solo subtask idle blocca l'avanzamento del watermark
-        // dell'intera pipeline — nessuna finestra tumbling si chiude mai, zero output.
-        // Stesso identico meccanismo (e stessa soglia) già usato in Query2Job per i
-        // gap notturni: qui il "gap" è permanente (subtask senza partizioni) invece
-        // che temporaneo, ma il fix è lo stesso.
         WatermarkStrategy<FlightEvent> watermarkStrategy =
                 FlinkSourceBuilder.buildWatermarkStrategy()
                         .withIdleness(Duration.ofSeconds(10));

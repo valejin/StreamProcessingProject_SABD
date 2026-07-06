@@ -2,8 +2,7 @@
 # =============================================================================
 # repeat_run.sh — Ripete N volte la STESSA configurazione (query + parallelism)
 #
-# A differenza di scale_task_slot.sh (che varia il parallelism tra run), qui
-# il parallelism resta fisso e si ripete più volte la stessa run — serve a
+# Qui il parallelism resta fisso e si ripete più volte la stessa run — serve a
 # stimare quanta variabilità c'è a parità di configurazione (cache OS, jitter
 # di sistema, Docker, ecc.), per poter dire con più sicurezza se una
 # differenza osservata tra parallelism diversi è un segnale reale o rientra
@@ -26,10 +25,9 @@
 #                                 variazione (stdev/mean %) delle metriche
 #                                 chiave sulle N ripetizioni
 #
-# Riusa run_pipeline.sh così com'è (nessuna duplicazione di logica), stesso
-# principio di scale_task_slot.sh: cancella i file della query da Results/
-# prima di ogni run per evitare che un run fallito lasci dati vecchi da
-# archiviare per errore.
+# Riusa run_pipeline.sh così com'è (nessuna duplicazione di logica): cancella i
+# file della query da Results/ prima di ogni run per evitare che un run fallito
+# lasci dati vecchi da archiviare per errore.
 # =============================================================================
 
 set -euo pipefail
@@ -78,10 +76,8 @@ for i in $(seq 1 "$N_REPEATS"); do
     log "Ripetizione ${i}/${N_REPEATS} — query=${QUERY} parallelism=${PARALLELISM} tsf=${TIME_SCALE_FACTOR}"
     sep
 
-    # Stesso principio di scale_task_slot.sh: rimuove i file di questa query
-    # rimasti in Results/ da run precedenti, così un fallimento nella
-    # rigenerazione viene segnalato esplicitamente invece di archiviare dati
-    # vecchi senza dirlo.
+    # Rimuove i file di questa query rimasti in Results/ da run precedenti, così un fallimento nella
+    # rigenerazione viene segnalato esplicitamente invece di archiviare dati vecchi senza dirlo.
     rm -f "$RESULTS_DIR"/*"${QUERY}"*.csv "$RESULTS_DIR"/*"${QUERY}"*.txt 2>/dev/null || true
 
     TIME_SCALE_FACTOR="$TIME_SCALE_FACTOR" bash "$RUN_PIPELINE" "$QUERY" "$PARALLELISM" \

@@ -10,9 +10,7 @@
 #   (normalmente chiamato da run_pipeline.sh, non direttamente)
 #
 # FUNZIONAMENTO — AUTO-DISCOVERY MULTI-VERTEX:
-#   A differenza della versione precedente (che assumeva sempre 2
-#   vertex: source+filter e window+sink), questo poller scopre TUTTI
-#   i vertex del job e li classifica per ruolo:
+#   Questo poller scopre TUTTI i vertex del job e li classifica per ruolo:
 #
 #     SOURCE  : vertex con "Kafka"/"Source" nel nome
 #               (Q1: un solo vertex Source+Filter+keyBy fuso)
@@ -24,13 +22,8 @@
 #               (Q2: TRE vertex separati: 1h, 6h, global — ciascuno
 #                    campionato su colonne CSV distinte)
 #
-#   Questo risolve il mismatch della versione precedente, dove con
-#   3 windowAll paralleli il loop di discovery sovrascriveva
-#   VID_WINDOW tenendo solo l'ultimo vertex trovato (tipicamente
-#   "global"), facendo leggere filter_rps dal vertex sbagliato.
-#
 # OUTPUT CSV (schema esteso rispetto alla versione precedente):
-#   Q1: stesse colonne di prima (compatibilità totale)
+#   Q1: timestamp_epoch, timestamp_iso, job_id, metriche raccolte
 #   Q2: colonne source_* identiche, più win1h_*, win6h_*,
 #       winglobal_* per ciascuna delle tre finestre separate
 # ============================================================
@@ -153,10 +146,9 @@ except Exception:
 # Scopre TUTTE le chiavi metrica che contengono il pattern, non solo la prima.
 # Necessario perché con parallelism > partizioni Kafka disponibili esiste
 # una chiave per subtask (es. "0.Filter...", "1.Filter..."), e solo una è
-# quella del subtask che riceve davvero dati — prendere "la prima" (come
-# faceva discover_metric_names) rischia di selezionare un subtask idle e
-# campionare zero per tutta la sessione, anche se la pipeline lavora
-# correttamente altrove.
+# quella del subtask che riceve davvero dati — prendere "la prima" rischia di
+# selezionare un subtask idle e campionare zero per tutta la sessione,
+# anche se la pipeline lavora correttamente altrove.
 discover_all_metric_keys() {
     local job_id="$1"
     local vertex_id="$2"
@@ -352,12 +344,6 @@ while is_job_running "$JOB_ID"; do
         WIN_BUSY_MS=$(fetch_max "$JOB_ID" "$VID_WINDOW" "${WIN_BUSY_KEYS[@]}")
         WIN_BACKPRESSURE_MS=$(fetch_max "$JOB_ID" "$VID_WINDOW" "${WIN_BACKPRESSURE_KEYS[@]}")
         WIN_IDLE_MS=$(fetch_max "$JOB_ID" "$VID_WINDOW" "${WIN_IDLE_KEYS[@]}")
-        # sink_csv_records_in_per_sec: nessun vertex Sink dedicato viene scoperto
-        # da questo script — il valore precedente qui interrogava per errore
-        # (copia-incolla) la stessa metrica del vertex WINDOW una seconda volta.
-        # Placeholder onesto a 0.0 finché non si implementa una vera discovery
-        # del vertex Sink; la colonna resta nello schema per compatibilità con
-        # compare_metrics.py (che la legge ma non la usa nelle statistiche).
         WINDOW_VALS="${WIN_RECORDS_IN},${WIN_RECORDS_OUT},0.0,${WIN_BUSY_MS},${WIN_BACKPRESSURE_MS},${WIN_IDLE_MS}"
         echo "${TS_EPOCH},${TS_ISO},${JOB_ID},${SOURCE_VALS},${WINDOW_VALS}" >> "$OUTPUT_FILE"
 

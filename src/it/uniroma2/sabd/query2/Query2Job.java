@@ -49,14 +49,6 @@ import java.util.*;
  *   Gli heartbeat vengono filtrati in Flink con e.isHeartbeat() PRIMA di
  *   qualsiasi aggregazione: non inquinano né Q1 né Q2.
  *
- * Vantaggi rispetto alle alternative:
- *   - Più affidabile di un trigger Processing-Time: il timing del Producer
- *     è sincronizzato con il TIME_SCALE_FACTOR, mentre un timer wall-clock
- *     in Flink si desincronizza durante checkpoint o pause del job.
- *   - Più semplice di un Custom Trigger Event+ProcessingTime.
- *   - Retrocompatibile: messaggi senza il campo "heartbeat" vengono trattati
- *     come heartbeat=false (nessuna modifica al comportamento esistente).
- *
  * ── Struttura della pipeline ─────────────────────────────────────────────────
  *
  * Kafka → WatermarkStrategy → filtro heartbeat+completati → tre windowAll:
@@ -127,9 +119,6 @@ public class Query2Job {
         // del watermark (fromSource) e PRIMA delle finestre. In questo modo:
         //   - Il WatermarkStrategy vede gli heartbeat → il watermark avanza.
         //   - Le finestre ricevono solo voli reali → le statistiche sono corrette.
-        //
-        // NON filtrare gli heartbeat direttamente nella sorgente o nel
-        // WatermarkStrategy: si perderebbe l'avanzamento del watermark.
         DataStream<FlightEvent> completedFlights = flights
                 .filter(e -> !e.isHeartbeat() && e.isCompleted() && e.getOriginAirportId() != null);
 
@@ -159,13 +148,12 @@ public class Query2Job {
         //   - ts = DATASET_START_MS (2025-01-01 00:00:00): inizio semantico della
         //     GlobalWindow, costante per tutti i trigger
         //   - influxTs = ora virtuale del trigger (07:00, 08:00, ...): distinto per
-        //     ogni scatto, usato da InfluxDB. Sink senza HashSet → nessuna perdita di righe
+        //     ogni scatto, usato da InfluxDB.
         // Sliding window: deduplicazione HashSet necessaria per i pane duplicati
         writeWithHeader(ranked1h.map(Query2Job::formatCsvRow),   OUTPUT_PATH_1H);
         writeWithHeader(ranked6h.map(Query2Job::formatCsvRow),   OUTPUT_PATH_6H);
         // Global window: NO deduplicazione — ogni trigger emette sempre righe nuove
-        // (le statistiche cumulative cambiano ad ogni trigger), e ts=DATASET_START
-        // è costante per semantica corretta (la finestra inizia dall'inizio del dataset).
+        // (le statistiche cumulative cambiano ad ogni trigger)
         writeWithoutDedup(rankedGlobal.map(Query2Job::formatCsvRowGlobal), OUTPUT_PATH_GLOBAL, CSV_HEADER_GLOBAL);
 
         // ── 8. Sink InfluxDB (per Grafana) ────────────────────────────────────
@@ -423,11 +411,8 @@ public class Query2Job {
      *   - sliding 6h:  duration = 21600 s
      *   - global:      duration = (triggerTs - DATASET_START_MS) / 1000 s
      *
-     * Formattato con 10 decimali (invece dei 2 di default) per evitare
-     * l'azzeramento visivo nei casi a bassa densità: con il minimo di
-     * 30 voli su una finestra 6h, 30/21600 = 0.0013888889, valore che
-     * con 2 decimali risulterebbe "0.00" ma con 10 resta pienamente
-     * distinguibile da zero.
+     * Formattato con 10 decimali per evitare l'azzeramento visivo nei casi
+     * a bassa densità: con il minimo di 30 voli su una finestra 6h
      */
     private static String formatMetricsRow(Q2RankedEntry r, String windowType) {
         long latencyMs = r.maxKafkaProduceTime > 0

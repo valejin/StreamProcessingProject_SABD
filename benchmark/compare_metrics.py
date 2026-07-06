@@ -262,9 +262,6 @@ def compute_internal_stats_q2_branches(int_rows: list[dict]) -> dict:
     Calcola busy_ms/backpressure/throughput SEPARATAMENTE per ciascuno
     dei tre rami window di Q2 (1h, 6h, global), per rispondere alla
     domanda "quale finestra sta saturando la CPU del TaskManager?".
-
-    Restituisce {} se int_rows non ha la struttura multi-ramo (es. è
-    in realtà un CSV Q1 caricato per errore).
     """
     if not int_rows or "win1h" not in int_rows[0]:
         return {}
@@ -531,34 +528,6 @@ def print_summary(ext_stats: dict, int_stats: dict):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def load_challenger(path: str) -> list[dict]:
-    """
-    Carica challenger_metrics.csv generato da generate_challenger_metrics.py.
-    Ogni riga = una run (identificata da parallelism + query + run_timestamp).
-    """
-    rows = []
-    with open(path, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f, skipinitialspace=True):
-            try:
-                rows.append({
-                    "run_timestamp":      row.get("run_timestamp", ""),
-                    "query":              row.get("query", ""),
-                    "parallelism":        int(row.get("parallelism", 1)),
-                    "latency_mean_ms":    float(row["latency_mean_ms"]),
-                    "latency_max_ms":     float(row["latency_max_ms"]),
-                    "latency_stdev_ms":   float(row.get("latency_stdev_ms", 0)),
-                    "throughput_ext_rps": _safe_float(row.get("throughput_ext_rps")),
-                    "throughput_int_rps": _safe_float(row.get("throughput_int_rps")),
-                    "delta_pct":          _safe_float(row.get("delta_pct")),
-                    "total_flights":      int(row.get("total_flights", 0)),
-                    "duration_s":         _safe_float(row.get("duration_s")),
-                    "n_windows":          int(row.get("n_windows", 0)),
-                })
-            except (KeyError, ValueError) as e:
-                print(f"  [WARN] riga challenger saltata: {e}", file=sys.stderr)
-    return rows
-
-
 def _safe_float(v) -> float | None:
     """Converte stringa in float; restituisce None se 'N/D' o vuoto."""
     if v is None or str(v).strip() in ("N/D", "", "None"):
@@ -790,14 +759,6 @@ def main():
         print(f"Canale interno non disponibile: {args.internal}")
         print("  (verrà prodotto da poll_flink_throughput.sh alla prossima run)")
 
-    chal_rows = []
-    if args.challenger and Path(args.challenger).exists():
-        print(f"Caricamento challenger:      {args.challenger}")
-        chal_rows = load_challenger(args.challenger)
-        print(f"  → {len(chal_rows)} run caricate")
-    elif args.challenger:
-        print(f"Challenger non disponibile:  {args.challenger}")
-        print("  (generalo con: python3 generate_challenger_metrics.py)")
 
     if not ext_rows:
         print("ERRORE: CSV esterno vuoto o non trovato.", file=sys.stderr)
@@ -831,7 +792,7 @@ def main():
     # Per Q2 il formato per-finestra di build_comparison_rows (pensato per Q1,
     # con un'unica colonna ext_sys_rps globale) non è applicabile nello stesso
     # modo: lo salta e produce solo il summary testuale con le sezioni per
-    # window_type, già sufficiente per il report.
+    # window_type.
     if not is_q2:
         comp_rows = build_comparison_rows(ext_rows, int_stats)
         comp_path = out_dir / f"metrics_comparison_{query_tag}.csv"
@@ -927,8 +888,7 @@ def write_summary_q1(summary_path, ext_stats, int_stats, query_tag):
                 "    NON include il buffer di finestra → misura esterna più accurata.\n")
         f.write("  - Throughput: EWMA (interno) pesa i burst recenti più della media globale\n"
                 "    (esterno derivato). Scarto <10% tra i due metodi è atteso e accettabile.\n")
-        f.write("  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo\n"
-                "    di bottiglia durante l'esecuzione.\n")
+
 
 
 def write_summary_q2(summary_path, ext_stats, int_stats, query_tag, branch_stats=None):
@@ -1049,8 +1009,6 @@ def write_summary_q2(summary_path, ext_stats, int_stats, query_tag, branch_stats
                 "    include il buffering di finestra. Per 'global', la finestra non si\n"
                 "    chiude mai: la latenza riflette il tempo dall'ultimo evento al\n"
                 "    trigger periodico (ContinuousEventTimeTrigger ogni 60min event time).\n")
-        f.write("  - Backpressure assente: sink InfluxDB+CSV non ha costituito collo\n"
-                "    di bottiglia durante l'esecuzione.\n")
 
 
 if __name__ == "__main__":

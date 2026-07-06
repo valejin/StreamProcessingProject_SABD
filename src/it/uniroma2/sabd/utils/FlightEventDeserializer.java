@@ -39,9 +39,6 @@ import java.time.format.DateTimeFormatter;
  * legge il loro eventTime e fa avanzare il watermark. Il campo isHeartbeat()
  * viene poi usato dai filtri in Query1Job e Query2Job per escluderli dalle
  * aggregazioni prima che entrino nelle finestre.
- *
- * Retrocompatibilità: i messaggi senza il campo "heartbeat" (es. prodotti da
- * versioni precedenti del producer) vengono trattati come heartbeat=false.
  */
 public class FlightEventDeserializer implements DeserializationSchema<FlightEvent> {
 

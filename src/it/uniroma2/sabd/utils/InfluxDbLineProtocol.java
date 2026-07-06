@@ -32,11 +32,6 @@ public class InfluxDbLineProtocol {
      * Fields:      num_flights, completed, cancelled, diverted,
      *              dep_delay_mean, cancellation_rate, late_departure_rate
      * Timestamp:   windowStart (epoch ms) → punto temporale del bordo sinistro
-     *
-     * Esempio output:
-     *   q1_metrics,airline=AA num_flights=13i,completed=13i,cancelled=0i,
-     *   diverted=0i,dep_delay_mean=7.38,cancellation_rate=0.00,
-     *   late_departure_rate=30.77 1735689600000
      */
     public static String fromQ1(Q1WindowResult r) {
         StringBuilder sb = new StringBuilder();

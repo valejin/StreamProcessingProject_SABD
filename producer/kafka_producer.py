@@ -1,6 +1,5 @@
 """
-kafka_producer.py  –  Produttore Kafka per il Progetto 2 SABD
-Università degli Studi di Roma Tor Vergata – A.A. 2025/26
+kafka_producer.py  –  Produttore Kafka
 
 Responsabilità del Producer:
   1. LOAD & MERGE   – carica e unisce i 4 CSV mensili del dataset

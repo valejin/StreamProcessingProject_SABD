@@ -25,7 +25,7 @@
 # Output:
 #   Results/scale_task_slot_<query>/p<N>/   → una sottocartella per ogni
 #       parallelism testato, con dentro tutti i CSV + summary di quel run
-#   Results/scale_task_slot_<query>/all_summaries.txt → i summary di tutti
+#   Results/scale_task_slot_<query>/all_summaries_scale_q1.txt → i summary di tutti
 #       i run concatenati in ordine, con separatori, per confronto rapido
 #
 # Riusa run_pipeline.sh così com'è (nessuna duplicazione di logica): per
